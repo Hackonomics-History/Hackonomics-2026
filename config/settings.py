@@ -105,6 +105,13 @@ ACCOUNT_EMAIL_VERIFICATION = "none"
 
 # Gemini
 GEMINI_API_KEY = env("GEMINI_API_KEY")
+
+# LLM
+LLM_SERVICE_URL = env(
+    "LLM_SERVICE_URL",
+    default="http://localhost:8001/chat/stream",
+)
+
 # Google
 GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET")

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .views import BusinessNewsRefreshView, BusinessNewsView
+from .views import BusinessNewsRefreshView, BusinessNewsView, ChatStreamView
 
 urlpatterns = [
     path("business-news/", BusinessNewsView.as_view(), name="business-news"),
@@ -9,4 +9,5 @@ urlpatterns = [
         BusinessNewsRefreshView.as_view(),
         name="business-news-refresh",
     ),
+    path("chat/stream/", ChatStreamView.as_view()),
 ]

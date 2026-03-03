@@ -1,3 +1,6 @@
+import requests
+from django.conf import settings
+from django.http import StreamingHttpResponse
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -44,4 +47,42 @@ class BusinessNewsRefreshView(APIView):
                 "task_id": async_result.id,
             },
             status=status.HTTP_202_ACCEPTED,
+        )
+
+class ChatStreamView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user_id = str(request.user.id)
+
+        payload = {
+            "user_id": user_id,
+            "question": request.data.get("question"),
+            "news": request.data.get("news", []),
+        }
+
+        try:
+            response = requests.post(
+                settings.LLM_SERVICE_URL,
+                json=payload,
+                stream=True,
+                timeout=300,
+            )
+        except requests.RequestException as e:
+            return Response(
+                {"error": "LLM service unavailable"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        def stream():
+            for chunk in response.iter_content(
+                chunk_size=None,
+                decode_unicode=True,
+            ):
+                if chunk:
+                    yield chunk
+
+        return StreamingHttpResponse(
+            stream(),
+            content_type="text/event-stream",
         )
