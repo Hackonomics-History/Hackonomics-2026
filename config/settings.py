@@ -112,6 +112,12 @@ LLM_SERVICE_URL = env(
     default="http://localhost:8001/chat/stream",
 )
 
+# Qrant
+QDRANT_URL = env("QDRANT_URL", default="http://localhost:6333")
+QDRANT_COLLECTION_NEWS = env("QDRANT_COLLECTION_NEWS", default="business_news")
+EMBED_MODEL_NAME = env("EMBED_MODEL_NAME", default="BAAI/bge-small-en-v1.5")
+RERANK_MODEL_NAME = env("RERANK_MODEL_NAME", default="BAAI/bge-reranker-base")
+
 # Google
 GOOGLE_CLIENT_ID = env("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET")
