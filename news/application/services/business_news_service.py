@@ -112,7 +112,7 @@ class BusinessNewsService:
         if not account or not account.country:
             return None
         return account.country.code
-    
+
     def _get_country_name(self, code: str | None) -> str | None:
         if not code:
             return None

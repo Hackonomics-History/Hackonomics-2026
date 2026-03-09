@@ -41,7 +41,7 @@ class LoginAPIView(GenericAPIView):
             device_id=serializer.validated_data["device_id"],
             remember_me=serializer.validated_data.get("remember_me", False),
         )
-        
+
         remember_days = 30 if serializer.validated_data.get("remember_me") else 7
         max_age = 60 * 60 * 24 * remember_days
 

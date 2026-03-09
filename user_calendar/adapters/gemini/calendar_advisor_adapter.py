@@ -11,7 +11,7 @@ from user_calendar.application.ports.external.calendar_advisor import (
 
 class GeminiCalendarAdvisorAdapter(CalendarAdvisorPort):
     MAX_EVENTS = 10
-    MODEL_NAME = "gemini-2.5-flash-lite"
+    MODEL_NAME = settings.GEMINI_MODEL
 
     def __init__(self):
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
