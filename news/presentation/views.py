@@ -1,4 +1,3 @@
-import requests
 from django.conf import settings
 from django.http import StreamingHttpResponse
 from rest_framework import status
@@ -57,37 +56,24 @@ class ChatStreamView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-
         question = request.data.get("question")
-
         service = build_llm_news_service()
-
-        payload = service.prepare_llm_payload(
+        result = service.ask(
             user_id=str(request.user.id),
             question=question,
         )
 
-        response = requests.post(
-            settings.LLM_SERVICE_URL,
-            json=payload,
-            stream=True,
-            timeout=300,
-        )
-
         def event_stream():
-            try:
-                for line in response.iter_lines(decode_unicode=True):
-                    if line:
-                        yield f"{line}\n"
-            finally:
-                response.close()
+            answer = result["answer"]
+
+            yield f"data: {answer} \n\n"
+            yield "data: done\n\n"
 
         return StreamingHttpResponse(
             event_stream(),
             content_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
         )

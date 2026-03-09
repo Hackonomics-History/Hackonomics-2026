@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiBusinessNewsAdapter(BusinessNewsPort):
-    MODEL = "gemini-2.5-flash-lite"
+    MODEL = settings.GEMINI_MODEL
     MAX_RETRIES = 3
     INITIAL_DELAY = 3
 

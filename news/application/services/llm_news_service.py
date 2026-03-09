@@ -1,15 +1,38 @@
+import logging
+
 from common.errors.error_codes import ErrorCode
 from common.errors.exceptions import BusinessException
 
+logger = logging.getLogger(__name__)
 
 class LlmNewsService:
-    def __init__(self, account_repo, news_repo, rag_hybrid, rag_rerank):
+
+    ORDINAL_MAP = {
+        "first": 0,
+        "second": 1,
+        "third": 2,
+        "fourth": 3,
+        "fifth": 4,
+    }
+
+    def __init__(
+        self,
+        account_repo,
+        news_repo,
+        news_query_repo,
+        rag_hybrid,
+        rag_rerank,
+        llm_adapter,
+    ):
         self.account_repo = account_repo
         self.news_repo = news_repo
+        self.news_query_repo = news_query_repo
         self.rag_hybrid = rag_hybrid
         self.rag_rerank = rag_rerank
+        self.llm_adapter = llm_adapter
 
-    def prepare_llm_payload(self, user_id: str, question: str):
+    def retrieve_context(self, user_id: str, question: str):
+
         if not question or not question.strip():
             raise BusinessException(ErrorCode.MISSING_REQUIRED_FIELD)
 
@@ -18,6 +41,16 @@ class LlmNewsService:
             raise BusinessException(ErrorCode.USER_NOT_FOUND)
 
         country_code = account.country.code
+        q = question.lower()
+
+        for word, idx in self.ORDINAL_MAP.items():
+
+            if f"{word} news" in q:
+                latest = self.news_query_repo.get_latest_news(country_code)
+
+                if not latest or len(latest) <= idx:
+                    raise BusinessException(ErrorCode.DATA_NOT_FOUND)
+                return latest[idx: idx + 1]
 
         candidates = self.rag_hybrid.search(
             question=question,
@@ -26,10 +59,11 @@ class LlmNewsService:
         )
 
         if not candidates:
-            latest = self.news_repo.get_latest_news(country_code)
+            latest = self.news_query_repo.get_latest_news(country_code)
+
             if not latest:
                 raise BusinessException(ErrorCode.DATA_NOT_FOUND)
-            candidates = latest[:10]
+            candidates = latest[:5]
 
         contexts = self.rag_rerank.rerank_news(
             question=question,
@@ -39,9 +73,19 @@ class LlmNewsService:
 
         if not contexts:
             raise BusinessException(ErrorCode.DATA_NOT_FOUND)
+        return contexts
 
+    def ask(self, user_id: str, question: str):
+        contexts = self.retrieve_context(user_id, question)
+
+        for c in contexts:
+            logger.info(f"RAG CONTEXT: {c}")
+
+        answer = self.llm_adapter.generate(
+            question=question,
+            contexts=contexts,
+        )
         return {
-            "user_id": str(user_id),
-            "question": question,
-            "news": contexts,
+            "answer": answer,
+            "sources": contexts,
         }
