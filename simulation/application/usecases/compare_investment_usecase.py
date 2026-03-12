@@ -38,10 +38,6 @@ class CompareInvestmentUseCase:
         deposit_rate: float,
     ) -> SimulationResult:
 
-        months = self.PERIOD_MAP.get(period)
-        if not months:
-            raise BusinessException(ErrorCode.INVALID_PARAMETER)
-
         if period not in self.PERIOD_MAP:
             raise BusinessException(ErrorCode.INVALID_PARAMETER)
 
@@ -60,8 +56,8 @@ class CompareInvestmentUseCase:
         if monthly_amount <= 0:
             raise BusinessException(ErrorCode.INVALID_PARAMETER)
 
-        currency = account.country.currency.upper()
         months = self.PERIOD_MAP[period]
+        currency = account.country.currency.upper()
 
         history = self.exchange_history_service.get_usd_history_until_today(
             currency=currency,

@@ -125,8 +125,6 @@ class LogoutAPIView(GenericAPIView):
 
         response = Response(status=status.HTTP_204_NO_CONTENT)
 
-        response = Response(status=status.HTTP_204_NO_CONTENT)
-
         response.delete_cookie(
             "access_token",
             samesite="Strict" if settings.IS_PRODUCTION else "Lax",
