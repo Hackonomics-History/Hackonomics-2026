@@ -43,7 +43,7 @@ class ExchangeHistoryAPIView(GenericAPIView):
         return Response(
             {
                 "base": "USD",
-                "target": currency.upper(),
+                "target": currency.upper() if currency else ExchangeHistoryService.DEFAULT_CURRENCY,
                 "period": period,
                 "end_date": str(date.today()),
                 "history": history,

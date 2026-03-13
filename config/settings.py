@@ -153,10 +153,6 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
-if DEBUG:
-    EXCEPTION_HANDLER = "rest_framework.views.exception_handler"
-else:
-    EXCEPTION_HANDLER = "common.errors.handlers.global_exception_handler"
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -165,7 +161,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    "EXCEPTION_HANDLER": EXCEPTION_HANDLER,
+    "EXCEPTION_HANDLER": "common.errors.handlers.global_exception_handler",
 }
 
 # Logging

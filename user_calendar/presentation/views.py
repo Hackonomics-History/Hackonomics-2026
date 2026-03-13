@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.adapters.orm.repository import DjangoAccountRepository
+from common.errors.exceptions import BusinessException
 from user_calendar.adapters.gemini.calendar_advisor_adapter import (
     GeminiCalendarAdvisorAdapter,
 )
@@ -35,6 +36,13 @@ from user_calendar.presentation.serializers import (
 from user_calendar.utils.google_oauth import build_google_calendar_flow
 
 logger = logging.getLogger(__name__)
+
+
+def _build_calendar_event_service() -> CalendarEventService:
+    return CalendarEventService(
+        event_repo=DjangoCalendarEventRepository(),
+        category_repo=DjangoCategoryRepository(),
+    )
 
 
 class UserCalendarInitAPIView(APIView):
@@ -105,15 +113,12 @@ class CategoryCreateAPIView(APIView):
     def post(self, request):
         serializer = CategoryCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        color = serializer.validated_data.get("color")
         service = CategoryService(DjangoCategoryRepository())
 
-        if not color:
-            color = "#3b82f6"
         category = service.create_category(
             user_id=UserId(request.user.id),
             name=serializer.validated_data["name"],
-            color=color,
+            color=serializer.validated_data.get("color"),
         )
 
         response = CategorySerializer.from_domain(category)
@@ -152,10 +157,7 @@ class CalendarEventCreateAPIView(APIView):
         serializer = CalendarEventCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        service = CalendarEventService(
-            event_repo=DjangoCalendarEventRepository(),
-            category_repo=DjangoCategoryRepository(),
-        )
+        service = _build_calendar_event_service()
 
         event = service.create_event(
             user_id=UserId(request.user.id),
@@ -174,10 +176,7 @@ class CalendarEventListAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        service = CalendarEventService(
-            event_repo=DjangoCalendarEventRepository(),
-            category_repo=DjangoCategoryRepository(),
-        )
+        service = _build_calendar_event_service()
         events = service.list_events(UserId(request.user.id))
         data = [CalendarEventSerializer.from_domain(e).data for e in events]
         return Response(data, status=status.HTTP_200_OK)
@@ -190,10 +189,7 @@ class CalendarEventDetailAPIView(APIView):
         serializer = CalendarEventCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        service = CalendarEventService(
-            event_repo=DjangoCalendarEventRepository(),
-            category_repo=DjangoCategoryRepository(),
-        )
+        service = _build_calendar_event_service()
 
         service.update_event(
             event_id=EventId(event_id),
@@ -208,10 +204,7 @@ class CalendarEventDetailAPIView(APIView):
         return Response(status=status.HTTP_200_OK)
 
     def delete(self, request, event_id: UUID):
-        service = CalendarEventService(
-            event_repo=DjangoCalendarEventRepository(),
-            category_repo=DjangoCategoryRepository(),
-        )
+        service = _build_calendar_event_service()
 
         service.delete_event(
             EventId(event_id),
@@ -250,6 +243,8 @@ class CalendarAdviceView(APIView):
 
             return Response({"advice": advice_data}, status=status.HTTP_200_OK)
 
+        except BusinessException:
+            raise
         except Exception as e:
             logger.error(f"CalendarAdvisorService Error: {str(e)}")
             return Response(

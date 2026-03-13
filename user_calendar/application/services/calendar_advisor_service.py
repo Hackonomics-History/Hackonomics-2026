@@ -1,4 +1,5 @@
 import json
+import logging
 
 from accounts.application.ports.repository import AccountRepository
 from common.errors.error_codes import ErrorCode
@@ -8,6 +9,8 @@ from user_calendar.application.ports.external.calendar_advisor import (
 )
 from user_calendar.application.ports.repository import CalendarEventRepository
 from user_calendar.domain.value_objects import UserId
+
+logger = logging.getLogger(__name__)
 
 
 class CalendarAdvisorService:
@@ -51,19 +54,18 @@ class CalendarAdvisorService:
                 document_text=document_text,
                 country_context=country_context,
             )
-            print("=== GEMINI RAW OUTPUT ===")
-            print(result)
+            logger.debug("Gemini raw output: %s", result)
             return result
         except Exception as e:
             err_msg = str(e)
 
             if "RESOURCE_EXHAUSTED" in err_msg or "429" in err_msg:
-                print("⚠️ Gemini quota exceeded. Using fallback advisor.")
+                logger.warning("Gemini quota exceeded. Using fallback advisor.")
                 return self._fallback_advice(
                     events_text, document_text, country_context
                 )
 
-            print("Gemini error:", err_msg)
+            logger.error("Gemini error: %s", err_msg)
             return self._fallback_advice(events_text, document_text, country_context)
 
     def _fallback_advice(

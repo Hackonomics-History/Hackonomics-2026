@@ -1,32 +1,299 @@
-# Hackertion
+# Hackonomics 2026 — MyEconoCoach
 
-This application helps users
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Django](https://img.shields.io/badge/Django-6.0-092E20?logo=django&logoColor=white)
+![DRF](https://img.shields.io/badge/Django_REST_Framework-3.x-red)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-4169E1?logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
+![Celery](https://img.shields.io/badge/Celery-5.x-37814A?logo=celery&logoColor=white)
+![Kafka](https://img.shields.io/badge/Apache_Kafka-4.1-231F20?logo=apachekafka&logoColor=white)
+![Qdrant](https://img.shields.io/badge/Qdrant-1.9-FF4B4B)
+![Gemini](https://img.shields.io/badge/Google_Gemini-AI-4285F4?logo=google&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-- understand how news & global economics affect daily life
+---
 
-- receive AI-driven schedule insight
+## 1. Project Overview
 
-- track financial implications of events
+**MyEconoCoach** is a personal financial coaching built with Django. It helps individuals understand and optimize their finances by combining real-time economic data, AI-generated insights, and intelligent calendar planning.
 
-- stay informed with personalized business news
+### What it does
 
-### Clean Architecture
+| Domain | Capability |
+|--------|-----------|
+| **Authentication** | Email/password signup & login, Google OAuth 2.0, JWT cookie sessions |
+| **Financial Profile** | Store country, currency, annual income, and monthly investable amount |
+| **Exchange Rates** | Live USD conversion rates and historical rate charts |
+| **Investment Simulation** | Compare Dollar-Cost Averaging (USD) vs fixed-term deposit returns |
+| **Business News** | Country-specific business news fetched and summarized via Google Gemini |
+| **AI News Chat** | RAG-powered chat over business news with semantic + keyword hybrid search |
+| **Smart Calendar** | Financial event calendar with categories, cost tracking, and Google Calendar sync |
+| **AI Calendar Advice** | Upload a financial document; Gemini analyzes it and suggests calendar changes |
+| **Event Streaming** | Kafka-based outbox pattern for reliable domain event publishing |
 
-- presentation should not depend on other modules' adapters
+### Who it is for
 
-    import only its own module service
+Individual investors and financially-conscious users who want a unified, AI-enhanced view of their personal economic situation — tailored to their country and currency.
 
+---
+---
 
-### Custom AI
+## 2. Tech Stack
 
+### Core
+
+| Layer | Technology |
+|-------|-----------|
+| Language | Python 3.12 |
+| Web Framework | Django 6.0 |
+| API Framework | Django REST Framework |
+| Database | PostgreSQL 15 (psycopg3) |
+| Authentication | Custom JWT (httpOnly cookies) + Google OAuth 2.0 |
+
+### Infrastructure
+
+| Service | Role |
+|---------|------|
+| Redis 7 | Cache (business news TTL, distributed locks) + Celery broker/backend |
+| Celery | Async task queue (news fetch) + Beat scheduler (every 6 hours) |
+| Apache Kafka 4.1 | Domain event streaming via outbox pattern |
+| Qdrant 1.9 | Vector database for RAG semantic search |
+
+### AI & ML
+
+| Library | Role |
+|---------|------|
+| `google-genai` | Business news generation & calendar advice via Gemini |
+| `fastembed` | Text embeddings (BGE small) + cross-encoder reranking |
+| `torch` (CPU) | Runtime for FastEmbed models |
+
+### Developer Tools
+
+| Tool | Role |
+|------|------|
+| `drf-spectacular` | Auto-generated OpenAPI 3 schema (Swagger UI + ReDoc) |
+| `black` / `isort` / `flake8` | Code formatting & linting |
+| `mypy` + `django-stubs` | Static type checking |
+| `pytest` + `pytest-django` | Test suite |
+| Docker Compose | Local full-stack orchestration |
+
+---
+## 3. Features
+
+### Authentication
+- Email/password signup with password policy enforcement (length, uppercase, special chars)
+- JWT tokens stored as `httpOnly` cookies (`access_token`, `refresh_token`)
+- Google OAuth 2.0 login flow
+- Token refresh endpoint
+- `remember_me` support (7-day vs 30-day refresh token expiry)
+
+### Financial Profile
+- Store and update country code, currency, annual income, monthly investable amount
+- Country/currency validated against live REST Countries data
+- Automatically looks up live USD → user's currency exchange rate
+
+### Exchange Rates
+- Live USD → any currency conversion (via ExchangeRate API)
+- Historical rate series for 3 months, 6 months, 1 year, 2 years (via Frankfurter API)
+
+### Investment Simulation
+- Dollar-Cost Averaging (DCA into USD) vs fixed-term deposit comparison
+- Uses actual historical exchange rate data for the user's currency
+- Returns winner, percentage difference, and a plain-language summary
+
+### Business News (AI + RAG)
+- Country-specific business news generated by Google Gemini
+- Cached in PostgreSQL, refreshed every 6 hours via Celery Beat
+- Distributed lock prevents duplicate refresh jobs
+- News documents indexed into Qdrant vector store
+- Per-user refresh endpoint queues a Celery task on demand
+
+### AI News Chat (RAG)
+- Hybrid retrieval: dense vector search (Qdrant + BGE embeddings) + BM25 keyword search
+- Cross-encoder reranking (BGE Reranker) to select top-3 contexts
+- Ordinal shortcut: "first news", "second news" etc. bypasses RAG and fetches directly
+- Gemini generates a grounded answer from retrieved contexts
+- Streaming SSE response (`text/event-stream`)
+
+### Smart Calendar
+- Create, list, update, delete calendar events with titles, date/time range, and estimated cost
+- Color-coded categories per user
+- Ownership enforcement on all mutations
+- Google Calendar OAuth 2.0 integration (connect/store tokens)
+
+### AI Calendar Advice
+- Submit any financial document (e.g. tax notice, pay slip) as text
+- Gemini analyzes the document against the user's existing calendar events and financial profile
+- Returns structured JSON advice: keep / update / delete suggestions per event
+- Automatic fallback response if Gemini quota is exhausted
+
+### Event-Driven Architecture
+- Outbox pattern: domain events written to `OutboxEvent` table within the same transaction
+- Background relay process publishes outbox events to Kafka topics
+- `accounts` app consumes Kafka events to react to user sign-up events
+- Management commands: `run_account_consumer`, `process_outbox`
+
+---
+
+## 4. API Endpoints
+
+### Authentication — `/api/auth/`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/auth/signup/` | Public | Create account (email + password) |
+| `POST` | `/api/auth/login/` | Public | Login; sets `access_token` + `refresh_token` cookies |
+| `POST` | `/api/auth/logout/` | Public | Clear auth cookies |
+| `POST` | `/api/auth/refresh/` | Public | Rotate access token using refresh cookie |
+| `GET` | `/api/auth/me/` | JWT | Return current user id and email |
+| `GET` | `/api/auth/google/login/` | Public | Redirect to Google OAuth consent screen |
+| `GET` | `/api/auth/google/callback/` | Public | Google OAuth callback; sets auth cookies |
+
+### Account — `/api/account/`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/account/me/` | JWT | Retrieve user's financial profile |
+| `PUT` | `/api/account/me/` | JWT | Update financial profile (country, currency, income) |
+| `GET` | `/api/account/me/exchange-rate/` | JWT | Live USD → user's currency rate |
+
+### Country Metadata — `/api/meta/`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/meta/countries/` | Public | List all countries with currencies and flags |
+| `GET` | `/api/meta/countries/<code>/` | Public | Retrieve a single country by ISO-2 code |
+
+### Exchange Rates — `/api/exchange/`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/exchange/usd-to/<currency>/` | Public | Current USD → `currency` rate |
+| `GET` | `/api/exchange/history/?currency=KRW&period=6m` | Public | Historical USD rates. Periods: `3m` `6m` `1y` `2y` |
+
+### Investment Simulation — `/api/simulation/`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/simulation/compare/dca-vs-deposit/` | JWT | Compare DCA (USD) vs fixed deposit for the user's currency |
+
+Request body:
+```json
+{
+  "period": "1y",
+  "deposit_rate": 3.5
+}
 ```
-News Sources
-     ↓
-Gemini → summarization (5 topics)
-     ↓
-Learning AI Model (your custom layer)
-     ↓
-Learning Insights Engine
-     ↓
-Frontend (learning dashboard)
+
+### Business News — `/api/news/`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/news/business-news/` | JWT | Latest cached business news for user's country |
+| `POST` | `/api/news/business-news/refresh/` | JWT | Queue an on-demand Celery refresh task |
+| `POST` | `/api/news/chat/stream/` | JWT | RAG-powered streaming chat about the news |
+
+Chat request body:
+```json
+{ "question": "What are the latest trends in the Korean economy?" }
 ```
+
+### Calendar — `/api/calendar/`
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/calendar/init/` | JWT | Initialize (or retrieve) user's calendar |
+| `GET` | `/api/calendar/me/` | JWT | Get user's calendar details |
+| `GET` | `/api/calendar/oauth/login/` | JWT | Get Google Calendar OAuth authorization URL |
+| `GET` | `/api/calendar/oauth/callback/` | JWT | Google Calendar OAuth callback |
+| `POST` | `/api/calendar/categories/create/` | JWT | Create a new event category |
+| `GET` | `/api/calendar/categories/` | JWT | List user's categories |
+| `DELETE` | `/api/calendar/categories/<uuid>/` | JWT | Delete a category |
+| `POST` | `/api/calendar/events/create/` | JWT | Create a calendar event |
+| `GET` | `/api/calendar/events/` | JWT | List all user's events |
+| `PUT` | `/api/calendar/events/<uuid>/` | JWT | Update an event |
+| `DELETE` | `/api/calendar/events/<uuid>/` | JWT | Delete an event |
+| `POST` | `/api/calendar/advisor/` | JWT | Submit a document for AI calendar advice |
+
+Advisor request body:
+```json
+{ "document_text": "Your salary notice or tax document text here..." }
+```
+
+---
+
+## 5. Database Models
+
+### `auth_user` (Django built-in)
+Standard Django user. `username` is set to the email address.
+
+### `AccountModel` (`accounts` app)
+Financial profile linked 1:1 to a Django user.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | Integer (unique) | FK to `auth_user.id` |
+| `country_code` | CharField(2) | ISO-2 country code (e.g. `KR`) |
+| `currency` | CharField(3) | ISO-4217 currency (e.g. `KRW`) |
+| `annual_income` | Decimal(15,2) | Annual income in local currency |
+| `monthly_investable_amount` | Decimal(15,2) | Monthly amount available to invest |
+
+### `UserCalendarModel` (`user_calendar` app)
+One calendar per user; stores Google Calendar OAuth tokens.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `user_id` | Integer (unique) | FK to `auth_user.id` |
+| `calendar_id` | UUID (unique) | Internal calendar ID |
+| `provider` | CharField | `"google"` |
+| `google_calendar_id` | CharField | Google calendar ID (e.g. `"primary"`) |
+| `access_token` | TextField | Google OAuth access token |
+| `refresh_token` | TextField | Google OAuth refresh token |
+
+### `CategoryModel` (`user_calendar` app)
+Color-coded labels owned by a user; applied to calendar events.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID (PK) | |
+| `user_id` | Integer (indexed) | FK to `auth_user.id` |
+| `name` | CharField(100) | Category name |
+| `color` | CharField(20) | Hex color (default `#3b82f6`) |
+
+### `CalendarEventModel` (`user_calendar` app)
+Individual financial events on the calendar.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID (PK) | |
+| `user_id` | Integer (indexed) | FK to `auth_user.id` |
+| `title` | CharField(255) | Event title |
+| `start_at` / `end_at` | DateTimeField | Event window |
+| `estimated_cost` | Decimal(15,2) | Optional cost estimate |
+| `categories` | M2M → CategoryModel | Assigned categories |
+
+### `BusinessNewsModel` (`news` app)
+Cached AI-generated news snapshots per country.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `country_code` | CharField(10, indexed) | ISO-2 country code |
+| `content` | JSONField | Array of news items from Gemini |
+| `created_at` | DateTimeField | When this snapshot was fetched |
+
+### `BusinessNewsDocModel` (`news` app)
+Flat document records used for keyword-based retrieval.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `country_code` | CharField(10, indexed) | |
+| `title` | TextField | News headline |
+| `description` | TextField | News body |
+| `url` | TextField | Source URL (optional) |
+
+### `OutboxEvent` (`events` app)
+Transactional outbox for reliable Kafka publishing.
+
+Stores serialized domain events written atomically with the triggering business transaction, then relayed to Kafka by a background process.
+
+---

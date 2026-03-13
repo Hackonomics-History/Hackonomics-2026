@@ -132,9 +132,9 @@ class DjangoCalendarEventRepository(CalendarEventRepository):
         model.categories.set(cats)
 
     def find_by_user_id(self, user_id: UserId) -> List[CalendarEvent]:
-        rows = CalendarEventModel.objects.filter(user_id=user_id.value).order_by(
-            "start_at"
-        )
+        rows = CalendarEventModel.objects.prefetch_related("categories").filter(
+            user_id=user_id.value
+        ).order_by("start_at")
         return [
             CalendarEvent(
                 event_id=EventId(r.id),

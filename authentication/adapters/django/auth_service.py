@@ -34,7 +34,7 @@ class CentralAuthAdapter:
         return res.json()
 
     def logout(self, refresh_token: str):
-        requests.post(
+        res = requests.post(
             f"{settings.CENTRAL_AUTH_URL}/auth/logout",
             headers={
                 "X-Service-Key": settings.CENTRAL_AUTH_SERVICE_KEY,
@@ -42,6 +42,8 @@ class CentralAuthAdapter:
             },
             timeout=settings.CENTRAL_AUTH_TIMEOUT,
         )
+        if res.status_code != 200:
+            raise ValueError("Logout failed")
 
     def verify(self, access_token: str):
         res = requests.post(
