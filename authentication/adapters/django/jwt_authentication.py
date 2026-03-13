@@ -26,6 +26,7 @@ class JWTAuthentication(BaseAuthentication):
             "/api/auth/login/",
             "/api/auth/signup/",
             "/api/auth/refresh/",
+            "/api/auth/logout/",
         ]
         if any(request.path.startswith(p) for p in skip_paths):
             return None
@@ -49,3 +50,6 @@ class JWTAuthentication(BaseAuthentication):
         )
 
         return user, token
+
+    def authenticate_header(self, request):
+        return "Bearer"

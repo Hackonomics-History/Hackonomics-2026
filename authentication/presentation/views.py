@@ -109,6 +109,7 @@ class GoogleCallbackAPIView(APIView):
             httponly=True,
             secure=settings.IS_PRODUCTION,
             samesite="Strict" if settings.IS_PRODUCTION else "Lax",
+            max_age=60 * 60 * 24 * 30,  # OAuth always uses remember_me=True
             path="/",
         )
         return response
@@ -190,6 +191,17 @@ class RefreshAPIView(GenericAPIView):
             max_age=60 * 60,
             path="/",
         )
+
+        if tokens.get("refresh_token"):
+            response.set_cookie(
+                key="refresh_token",
+                value=tokens["refresh_token"],
+                httponly=True,
+                secure=settings.IS_PRODUCTION,
+                samesite="Strict" if settings.IS_PRODUCTION else "Lax",
+                max_age=60 * 60 * 24 * 7,
+                path="/",
+            )
 
         return response
 
