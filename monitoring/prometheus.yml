@@ -7,3 +7,7 @@ scrape_configs:
     static_configs:
       - targets: ["web:8000"]
     metrics_path: /metrics
+
+  - job_name: central-auth
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
