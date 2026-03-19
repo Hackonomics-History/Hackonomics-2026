@@ -44,6 +44,8 @@ TESTING = "pytest" in sys.modules
 
 # Application definition
 INSTALLED_APPS = [
+    # Monitoring
+    "django_prometheus",
     # Local apps
     "news",
     "user_calendar",
@@ -72,6 +74,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -81,6 +84,7 @@ MIDDLEWARE = [
     "allauth.account.middleware.AccountMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 SITE_ID = 1
@@ -256,7 +260,7 @@ CENTRAL_AUTH_TIMEOUT = env.int(
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
+        "ENGINE": "django_prometheus.db.backends.postgresql",
         "NAME": env("DB_NAME", default="myeconocoach"),
         "USER": env("DB_USER", default="econ_user"),
         "PASSWORD": env("DB_PASSWORD", default="econ_password"),

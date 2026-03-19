@@ -33,3 +33,5 @@ babel
 fastembed
 numpy==1.26.4
 qdrant-client==1.9.1
+django-prometheus
+prometheus-client

@@ -1,4 +1,25 @@
 services:
+  web:
+    build: .
+    container_name: myeconocoach-web
+    command: python manage.py runserver 0.0.0.0:8000
+    env_file:
+      - ./env/.env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+
   postgres:
     image: postgres:15-alpine
     container_name: myeconocoach-db
@@ -97,9 +118,46 @@ services:
       - redis
       - qdrant
 
+  prometheus:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.prometheus
+    container_name: myeconocoach-prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    depends_on:
+      - web
+
+  grafana:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.grafana
+    container_name: myeconocoach-grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    depends_on:
+      - prometheus
+
 volumes:
   postgres_data:
   redis_data:
   kafka_data:
   qdrant_data:
   celerybeat_data:
+  prometheus_data:
+  grafana_data:
