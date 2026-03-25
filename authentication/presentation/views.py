@@ -38,7 +38,7 @@ class LoginAPIView(GenericAPIView):
         tokens = auth_service.login(
             email=serializer.validated_data["email"],
             password=serializer.validated_data["password"],
-            device_id=serializer.validated_data["device_id"],
+            device_id=serializer.validated_data.get("device_id", ""),
             remember_me=serializer.validated_data.get("remember_me", False),
         )
 
@@ -162,7 +162,7 @@ class SignupAPIView(GenericAPIView):
 
         return Response(
             {
-                "id": user.id,
+                "ory_id": user.ory_id,
                 "email": user.email,
             },
             status=status.HTTP_201_CREATED,
@@ -213,7 +213,7 @@ class MeAPIView(GenericAPIView):
     def get(self, request):
         return Response(
             {
-                "user_id": request.user.id,
+                "ory_id": request.user.ory_id,
                 "email": request.user.email,
             },
             status=status.HTTP_200_OK,

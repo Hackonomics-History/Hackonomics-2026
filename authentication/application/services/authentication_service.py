@@ -3,7 +3,6 @@ from .logout_service import LogoutService
 from .oauth_service import OAuthService
 from .refresh_service import RefreshService
 from .signup_service import SignupService
-from .verify_service import VerifyService
 
 
 class AuthenticationService:
@@ -13,7 +12,7 @@ class AuthenticationService:
         self.oauth_service = OAuthService()
         self.logout_service = LogoutService()
         self.refresh_service = RefreshService()
-        self.verify_service = VerifyService()
+        # VerifyService removed — token verification is handled by JWKSMiddleware
 
     def login(self, email, password, device_id, remember_me):
         return self.login_service.login(email, password, device_id, remember_me)
@@ -29,6 +28,3 @@ class AuthenticationService:
 
     def refresh(self, refresh_token):
         return self.refresh_service.refresh(refresh_token)
-
-    def verify(self, access_token):
-        return self.verify_service.verify(access_token)
