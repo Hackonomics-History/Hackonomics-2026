@@ -1,14 +1,14 @@
 Django
 djangorestframework
-django-allauth[socialaccount]
 django-cors-headers
+PyJWT[crypto]
 psycopg[binary]
 requests
 django-environ
 cryptography
 drf-spectacular
 python-dateutil
-kafka-python
+confluent-kafka
 celery
 redis
 django-redis
@@ -35,3 +35,4 @@ numpy==1.26.4
 qdrant-client==1.9.1
 django-prometheus
 prometheus-client
+gunicorn==23.0.0

@@ -26,6 +26,42 @@ environ.Env.read_env(BASE_DIR / "env" / ".env")
 ENV = env("DJANGO_ENV", default="local")
 IS_PRODUCTION = ENV == "prod"
 
+# HIGH-6: Fail-fast strict mode — refuse to start in production with insecure defaults.
+if IS_PRODUCTION:
+    _insecure: list[str] = []
+    _secret_key = env("DJANGO_SECRETKEY", default="")
+    if not _secret_key or "django-insecure" in _secret_key:
+        _insecure.append("DJANGO_SECRETKEY is insecure or empty")
+    if len(_secret_key) < 50:
+        _insecure.append("DJANGO_SECRETKEY must be at least 50 characters in production")
+    _db_pass = env("DB_PASSWORD", default="")
+    if not _db_pass or _db_pass == "econ_password":
+        _insecure.append("DB_PASSWORD is insecure or empty")
+    if len(_db_pass) < 12:
+        _insecure.append("DB_PASSWORD must be at least 12 characters in production")
+    if not env("EXPECTED_JWT_ISSUER", default=""):
+        _insecure.append("EXPECTED_JWT_ISSUER is not set")
+    if not env("EXPECTED_JWT_AUDIENCE", default=""):
+        _insecure.append("EXPECTED_JWT_AUDIENCE is not set")
+    _metrics_pass = env("METRICS_BASIC_AUTH_PASSWORD", default="")
+    if not _metrics_pass or _metrics_pass.startswith("CHANGE_ME"):
+        _insecure.append("METRICS_BASIC_AUTH_PASSWORD is insecure or empty")
+    _svc_key = env("CENTRAL_AUTH_SERVICE_KEY", default="")
+    if not _svc_key or "super-secret-service-key" in _svc_key:
+        _insecure.append("CENTRAL_AUTH_SERVICE_KEY is insecure or empty")
+    _kafka = env("KAFKA_BOOTSTRAP_SERVERS", default="")
+    _allow_localhost = env("ALLOW_LOCALHOST_IN_PROD", default="False").strip().lower() == "true"
+    if not _kafka or (_kafka.startswith("localhost") and not _allow_localhost):
+        _insecure.append(
+            "KAFKA_BOOTSTRAP_SERVERS must use an internal service name in production "
+            "(e.g. kafka:9092), not localhost. "
+            "Set ALLOW_LOCALHOST_IN_PROD=True to override for local prod-mirror testing."
+        )
+    if _insecure:
+        for _msg in _insecure:
+            print(f"[FATAL] Production security check failed: {_msg}", file=sys.stderr)
+        sys.exit(1)
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -37,7 +73,8 @@ DEBUG = not IS_PRODUCTION
 
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 
-ALLOWED_HOSTS = ["*"]
+# HIGH-4: Lock to explicit host list. Set DJANGO_ALLOWED_HOSTS in env.
+ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
 # Test
 TESTING = "pytest" in sys.modules
@@ -59,10 +96,6 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "rest_framework",
     "corsheaders",
-    "allauth",
-    "allauth.account",
-    "allauth.socialaccount",
-    "allauth.socialaccount.providers.google",
     # default
     "django.contrib.admin",
     "django.contrib.auth",
@@ -70,7 +103,6 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "django.contrib.sites",
 ]
 
 MIDDLEWARE = [
@@ -80,32 +112,39 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
+    # AuthenticationMiddleware kept for Django Admin (session-based)
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "allauth.account.middleware.AccountMiddleware",
+    # JWKSMiddleware overrides request.user for all API paths
+    "authentication.adapters.django.jwks_middleware.JWKSMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
-SITE_ID = 1
-
+# Keep ModelBackend for Django Admin; allauth backend removed
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
-    "allauth.account.auth_backends.AuthenticationBackend",
 ]
 
-LOGIN_REDIRECT_URL = "/app/accounts"
-LOGOUT_REDIRECT_URL = "/login"
+# JWKS settings — Go BFF exposes the public key set at this URL
+JWKS_URL = f"{env('CENTRAL_AUTH_URL', default='http://localhost:8081')}/.well-known/jwks.json"
+JWKS_CACHE_TTL = 300  # seconds
 
-ACCOUNT_LOGIN_METHODS = {"email"}
+# JWT issuer expected in the `iss` claim. Set to the Go BFF's issuer string.
+# Required in production. Optional in local dev (warning logged if absent).
+EXPECTED_JWT_ISSUER = env("EXPECTED_JWT_ISSUER", default="")
 
-ACCOUNT_SIGNUP_FIELDS = [
-    "email*",
-    "username*",
-    "password1*",
-    "password2*",
-]
-ACCOUNT_EMAIL_VERIFICATION = "none"
+# HIGH-1: JWT audience claim verification. Set to the intended API audience string.
+EXPECTED_JWT_AUDIENCE = env("EXPECTED_JWT_AUDIENCE", default="")
+
+# HIGH-3: Basic Auth credentials for the /metrics endpoint scraped by Prometheus.
+# Leave empty in dev to allow unauthenticated access; set both in production.
+METRICS_BASIC_AUTH_USER = env("METRICS_BASIC_AUTH_USER", default="")
+METRICS_BASIC_AUTH_PASSWORD = env("METRICS_BASIC_AUTH_PASSWORD", default="")
+# Comma-separated CIDR allowlist for the Prometheus scraper IP.
+# Mirrors METRICS_ALLOWED_CIDR in Central-auth Go service.
+# Leave empty in dev (open access); set in production for double-lock.
+METRICS_ALLOWED_CIDR = env("METRICS_ALLOWED_CIDR", default="")
 
 # Gemini
 GEMINI_API_KEY = env("GEMINI_API_KEY")
@@ -159,8 +198,9 @@ CELERY_BEAT_SCHEDULE = {
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    # JWKSMiddleware sets request.user; this shim hands it to DRF's auth layer
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "authentication.adapters.django.jwt_authentication.JWTAuthentication",
+        "authentication.adapters.django.jwks_middleware.MiddlewarePassthroughAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
@@ -186,13 +226,13 @@ LOGGING = {
 SPECTACULAR_SETTINGS = {
     "TITLE": "MyEconoCoach API",
     "VERSION": "1.0.0",
-    "SECURITY": [{"CookieAuth": []}],
+    "SECURITY": [{"BearerAuth": []}],
     "COMPONENTS": {
         "securitySchemes": {
-            "CookieAuth": {
-                "type": "apiKey",
-                "in": "cookie",
-                "name": "access_token",
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
             }
         }
     },
@@ -200,11 +240,13 @@ SPECTACULAR_SETTINGS = {
 
 # React
 CORS_ALLOW_CREDENTIALS = True
+# CRITICAL: PROD CHANGE REQUIRED — replace localhost origins with production frontend domain
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
 
+# CRITICAL: PROD CHANGE REQUIRED — replace localhost origins with production frontend domain
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -245,10 +287,7 @@ CENTRAL_AUTH_URL = env(
     default="http://localhost:8081",
 )
 
-CENTRAL_AUTH_SERVICE_KEY = env(
-    "CENTRAL_AUTH_SERVICE_KEY",
-    default="super-secret-service-key9898",
-)
+CENTRAL_AUTH_SERVICE_KEY = env("CENTRAL_AUTH_SERVICE_KEY")  # no default — fail fast if missing
 
 CENTRAL_AUTH_TIMEOUT = env.int(
     "CENTRAL_AUTH_TIMEOUT",
@@ -272,23 +311,8 @@ DATABASES = {
 # Kafka
 KAFKA_BOOTSTRAP_SERVERS = env("KAFKA_BOOTSTRAP_SERVERS", default="localhost:9092")
 
-# Password validation
-# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
-
-AUTH_PASSWORD_VALIDATORS = [
-    {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
-    },
-]
+# Password validation removed: passwords are managed by the Go BFF / Ory Identity.
+# Django no longer owns user credentials.
 
 
 # Internationalization
