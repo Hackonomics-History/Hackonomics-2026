@@ -5,7 +5,7 @@ from user_calendar.domain.entities import CalendarEvent, Category, UserCalendar
 
 class UserCalendarSerializer(serializers.Serializer):
     calendar_id = serializers.UUIDField()
-    user_id = serializers.IntegerField()
+    user_id = serializers.CharField()
     provider = serializers.CharField()
     created_at = serializers.DateTimeField()
 

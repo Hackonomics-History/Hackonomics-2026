@@ -7,7 +7,7 @@ class GetAccountUseCase:
     def __init__(self, repository: AccountRepository):
         self.repository = repository
 
-    def execute(self, user_id: int) -> Optional[Dict[str, str]]:
+    def execute(self, user_id: str) -> Optional[Dict[str, str]]:
         account = self.repository.find_by_user_id(user_id)
 
         if account is None:

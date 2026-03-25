@@ -14,7 +14,7 @@ class CalendarId:
 
 @dataclass(frozen=True)
 class UserId:
-    value: int
+    value: str  # Ory identity UUID string
 
 
 @dataclass(frozen=True)

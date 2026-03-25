@@ -19,7 +19,7 @@ class UpdateAccountUseCase:
         self.repository = repository
         self.event_publisher = event_publisher
 
-    def execute(self, user_id: int, command: AccountUpdateCommand) -> None:
+    def execute(self, user_id: str, command: AccountUpdateCommand) -> None:
         if not user_id:
             raise BusinessException(ErrorCode.UNAUTHORIZED)
 

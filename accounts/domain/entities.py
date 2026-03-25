@@ -7,8 +7,8 @@ from accounts.domain.value_objects import AnnualIncome, Country
 
 @dataclass
 class Account:
-    # Django User model "id" == user_id
-    user_id: int
+    # Ory identity UUID — the Go BFF is the source of truth for this value
+    user_id: str
     country: Optional[Country]
     income: Optional[AnnualIncome]
     monthly_investable_amount: Optional[Decimal]

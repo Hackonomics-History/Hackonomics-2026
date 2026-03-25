@@ -26,7 +26,7 @@ class CompareDcaVsDepositAPIView(GenericAPIView):
         )
 
         result = usecase.execute(
-            user_id=user.id,
+            user_id=user.ory_id,
             period=data.get("period", "1y"),
             deposit_rate=data.get("deposit_rate"),
         )
