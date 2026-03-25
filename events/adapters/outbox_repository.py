@@ -12,7 +12,6 @@ class OutboxEventRepository(EventRepository):
             event_type=event.event_type,
             payload=event.payload,
             published=False,
-            created_at=event.occurred_at,
         )
 
     def get_by_id(self, event_id):
