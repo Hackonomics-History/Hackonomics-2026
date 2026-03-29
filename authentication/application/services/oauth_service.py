@@ -1,7 +1,5 @@
 from typing import Dict
 
-from django.contrib.auth.models import User
-
 from authentication.adapters.django.auth_service import CentralAuthAdapter
 from authentication.adapters.django.google_oauth import GoogleOAuthAdapter
 from common.errors.error_codes import ErrorCode
@@ -30,15 +28,9 @@ class OAuthService:
         if not email:
             raise BusinessException(ErrorCode.INVALID_PARAMETER)
 
-        user, _ = User.objects.get_or_create(username=email, defaults={"email": email})
-        user_id = str(user.pk)
-
+        # Delegate token issuance to the BFF; no local user creation
         try:
-            return self.central_auth.login(
-                user_id=user_id,
-                device_id="google-oauth",
-                remember_me=True,
-            )
+            return self.central_auth.google_login(email=email, device_id="google-oauth")
         except BusinessException:
             raise
         except Exception:

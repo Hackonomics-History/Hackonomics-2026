@@ -21,7 +21,7 @@ class BusinessNewsView(APIView):
     def get(self, request):
         service = build_business_news_service()
 
-        data = service.get_user_business_news(UserId(request.user.id))
+        data = service.get_user_business_news(UserId(request.user.ory_id))
 
         return Response(
             data,
@@ -35,7 +35,7 @@ class BusinessNewsRefreshView(APIView):
     def post(self, request):
         service = build_business_news_service()
 
-        country_code = service.refresh_user_country_news(UserId(request.user.id))
+        country_code = service.refresh_user_country_news(UserId(request.user.ory_id))
 
         async_result = fetch_business_news.delay(
             country_code,
@@ -59,7 +59,7 @@ class ChatStreamView(APIView):
         question = request.data.get("question")
         service = build_llm_news_service()
         result = service.ask(
-            user_id=str(request.user.id),
+            user_id=request.user.ory_id,
             question=question,
         )
 

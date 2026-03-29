@@ -9,9 +9,9 @@ from common.errors.exceptions import BusinessException
 
 
 class DjangoAccountRepository(AccountRepository):
-    def find_by_user_id(self, user_id: int) -> Optional[Account]:
+    def find_by_user_id(self, user_id: str) -> Optional[Account]:
         try:
-            m = AccountModel.objects.get(user_id=user_id)
+            m = AccountModel.objects.get(ory_identity_id=user_id)
         except AccountModel.DoesNotExist:
             return None
 
@@ -19,7 +19,7 @@ class DjangoAccountRepository(AccountRepository):
             raise BusinessException(ErrorCode.DATA_NOT_FOUND)
 
         return Account(
-            user_id=m.user_id,
+            user_id=m.ory_identity_id,
             country=Country(m.country_code, m.currency),
             income=AnnualIncome(m.annual_income),
             monthly_investable_amount=m.monthly_investable_amount,
@@ -37,7 +37,7 @@ class DjangoAccountRepository(AccountRepository):
             raise BusinessException(ErrorCode.DATA_NOT_FOUND)
 
         AccountModel.objects.update_or_create(
-            user_id=account.user_id,
+            ory_identity_id=account.user_id,
             defaults={
                 "country_code": account.country.code,
                 "currency": account.country.currency,

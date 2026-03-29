@@ -7,10 +7,10 @@ class UserEventPublisher:
     def user_signed_up(user) -> DomainEvent:
         return DomainEvent(
             aggregate_type="User",
-            aggregate_id=str(user.id),
+            aggregate_id=user.ory_id,
             event_type="USER_SIGNUP",
             payload={
-                "user_id": user.id,
+                "ory_id": user.ory_id,
                 "email": user.email,
             },
         )

@@ -10,7 +10,7 @@ class GetExchangeRateUseCase:
         self.repository = repository
         self.exchange_service = exchange_service
 
-    def execute(self, user_id: int) -> Dict[str, str | float]:
+    def execute(self, user_id: str) -> Dict[str, str | float]:
         account = self.repository.find_by_user_id(user_id)
 
         if not account:

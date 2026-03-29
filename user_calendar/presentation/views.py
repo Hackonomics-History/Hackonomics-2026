@@ -50,7 +50,7 @@ class UserCalendarInitAPIView(APIView):
 
     def post(self, request):
         service = UserCalendarService(DjangoUserCalendarRepository())
-        calendar = service.get_or_create_calendar_for_user(UserId(request.user.id))
+        calendar = service.get_or_create_calendar_for_user(UserId(request.user.ory_id))
         serializer = UserCalendarSerializer.from_domain(calendar)
 
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -84,9 +84,9 @@ class GoogleCalendarOAuthCallbackAPIView(APIView):
 
         service = UserCalendarService(DjangoUserCalendarRepository())
         # Stored tokens in UserCalendar
-        existing_calendar = service.get_calendar(UserId(request.user.id))
+        existing_calendar = service.get_calendar(UserId(request.user.ory_id))
         calendar = service.connect_google_calendar(
-            user_id=UserId(request.user.id),
+            user_id=UserId(request.user.ory_id),
             google_calendar_id="primary",  # Default calendar
             access_token=credentials.token,
             refresh_token=credentials.refresh_token or existing_calendar.refresh_token,
@@ -100,7 +100,7 @@ class MyCalendarAPIView(APIView):
 
     def get(self, request):
         service = UserCalendarService(DjangoUserCalendarRepository())
-        calendar = service.get_calendar(UserId(request.user.id))
+        calendar = service.get_calendar(UserId(request.user.ory_id))
         serializer = UserCalendarSerializer.from_domain(calendar)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -116,7 +116,7 @@ class CategoryCreateAPIView(APIView):
         service = CategoryService(DjangoCategoryRepository())
 
         category = service.create_category(
-            user_id=UserId(request.user.id),
+            user_id=UserId(request.user.ory_id),
             name=serializer.validated_data["name"],
             color=serializer.validated_data.get("color"),
         )
@@ -130,7 +130,7 @@ class CategoryListAPIView(APIView):
 
     def get(self, request):
         service = CategoryService(DjangoCategoryRepository())
-        categories = service.list_categories(UserId(request.user.id))
+        categories = service.list_categories(UserId(request.user.ory_id))
         data = [CategorySerializer.from_domain(c).data for c in categories]
 
         return Response(data, status=status.HTTP_200_OK)
@@ -143,7 +143,7 @@ class CategoryDeleteAPIView(APIView):
         service = CategoryService(DjangoCategoryRepository())
         service.delete_category(
             CategoryId(category_id),
-            UserId(request.user.id),
+            UserId(request.user.ory_id),
         )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -160,7 +160,7 @@ class CalendarEventCreateAPIView(APIView):
         service = _build_calendar_event_service()
 
         event = service.create_event(
-            user_id=UserId(request.user.id),
+            user_id=UserId(request.user.ory_id),
             title=serializer.validated_data["title"],
             start_at=serializer.validated_data["start_at"],
             end_at=serializer.validated_data["end_at"],
@@ -177,7 +177,7 @@ class CalendarEventListAPIView(APIView):
 
     def get(self, request):
         service = _build_calendar_event_service()
-        events = service.list_events(UserId(request.user.id))
+        events = service.list_events(UserId(request.user.ory_id))
         data = [CalendarEventSerializer.from_domain(e).data for e in events]
         return Response(data, status=status.HTTP_200_OK)
 
@@ -193,7 +193,7 @@ class CalendarEventDetailAPIView(APIView):
 
         service.update_event(
             event_id=EventId(event_id),
-            user_id=UserId(request.user.id),
+            user_id=UserId(request.user.ory_id),
             title=serializer.validated_data["title"],
             start_at=serializer.validated_data["start_at"],
             end_at=serializer.validated_data["end_at"],
@@ -208,7 +208,7 @@ class CalendarEventDetailAPIView(APIView):
 
         service.delete_event(
             EventId(event_id),
-            user_id=UserId(request.user.id),
+            user_id=UserId(request.user.ory_id),
         )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -228,7 +228,7 @@ class CalendarAdviceView(APIView):
 
         try:
             raw_advice = service.analyze_document_and_suggest(
-                user_id=UserId(request.user.id),
+                user_id=UserId(request.user.ory_id),
                 document_text=document_text,
             )
 

@@ -6,7 +6,7 @@ from accounts.domain.entities import Account
 
 class AccountRepository(ABC):
     @abstractmethod
-    def find_by_user_id(self, user_id: int) -> Optional[Account]:
+    def find_by_user_id(self, user_id: str) -> Optional[Account]:
         raise NotImplementedError
 
     @abstractmethod

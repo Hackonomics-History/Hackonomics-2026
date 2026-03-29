@@ -1,17 +1,24 @@
-from django.contrib.auth.models import User
-from django.db import IntegrityError
+from types import SimpleNamespace
 
+from authentication.adapters.django.auth_service import CentralAuthAdapter
 from common.errors.error_codes import ErrorCode
 from common.errors.exceptions import BusinessException
 
 
 class SignupService:
-    def signup(self, email: str, password: str) -> User:
+    def __init__(self) -> None:
+        self.central_auth = CentralAuthAdapter()
+
+    def signup(self, email: str, password: str):
+        """Proxy signup to the Go BFF. Returns a lightweight user object with ory_id."""
         try:
-            return User.objects.create_user(
-                username=email,
-                email=email,
-                password=password,
-            )
-        except IntegrityError:
-            raise BusinessException(ErrorCode.DUPLICATE_ENTRY)
+            result = self.central_auth.signup(email=email, password=password)
+        except BusinessException:
+            raise
+        except Exception:
+            raise BusinessException(ErrorCode.EXTERNAL_API_FAILED)
+
+        return SimpleNamespace(
+            ory_id=result.get("ory_id") or result.get("id"),
+            email=result.get("email", email),
+        )

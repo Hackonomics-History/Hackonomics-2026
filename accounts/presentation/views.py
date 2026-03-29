@@ -23,7 +23,7 @@ class AccountView(GenericAPIView):
 
     def get(self, request):
         usecase = GetAccountUseCase(repository=DjangoAccountRepository())
-        result = usecase.execute(user_id=request.user.id)
+        result = usecase.execute(user_id=request.user.ory_id)
 
         if result is None:
             return Response(
@@ -51,7 +51,7 @@ class AccountView(GenericAPIView):
             ),
         )
         usecase.execute(
-            user_id=request.user.id,
+            user_id=request.user.ory_id,
             command=command,
         )
 
@@ -68,5 +68,5 @@ class MyExchangeRateAPIView(GenericAPIView):
             exchange_service=ExchangeRateService(),
         )
 
-        result = usecase.execute(user_id=request.user.id)
+        result = usecase.execute(user_id=request.user.ory_id)
         return Response(result, status=status.HTTP_200_OK)
