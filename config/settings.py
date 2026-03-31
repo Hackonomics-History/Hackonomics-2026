@@ -109,6 +109,7 @@ MIDDLEWARE = [
     "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "common.middleware.request_id.RequestIDMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -294,6 +295,12 @@ CENTRAL_AUTH_TIMEOUT = env.int(
     default=5,
 )
 
+# Circuit breaker settings for Central-auth and JWKS fetch calls.
+# These document the intended thresholds; the values are used by
+# common/resilience/circuit_breaker.py via auth_service and jwks_middleware.
+CENTRAL_AUTH_CB_FAILURE_THRESHOLD = env.int("CENTRAL_AUTH_CB_FAILURE_THRESHOLD", default=5)
+CENTRAL_AUTH_CB_RECOVERY_TIMEOUT = env.int("CENTRAL_AUTH_CB_RECOVERY_TIMEOUT", default=30)
+
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
@@ -303,8 +310,16 @@ DATABASES = {
         "NAME": env("DB_NAME", default="myeconocoach"),
         "USER": env("DB_USER", default="econ_user"),
         "PASSWORD": env("DB_PASSWORD", default="econ_password"),
+        # In Docker, point at PgBouncer: DB_HOST=pgbouncer DB_PORT=5432.
+        # For local dev without PgBouncer, set DB_HOST=localhost DB_PORT=5431.
         "HOST": env("DB_HOST", default="localhost"),
         "PORT": env("DB_PORT", default="5431"),
+        # CRITICAL: must be 0 when routing through PgBouncer in transaction-pooling
+        # mode. Django must not hold persistent connections — PgBouncer owns the pool.
+        "CONN_MAX_AGE": 0,
+        # CRITICAL: server-side (named) cursors require session-level state that is
+        # lost between transactions under PgBouncer transaction pooling. Disable them.
+        "DISABLE_SERVER_SIDE_CURSORS": True,
     }
 }
 
