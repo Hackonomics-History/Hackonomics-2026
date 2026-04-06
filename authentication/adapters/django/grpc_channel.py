@@ -52,6 +52,16 @@ def get_channel() -> grpc.Channel:
 
     if _channel is None:
         target = getattr(settings, "CENTRAL_AUTH_GRPC_TARGET", "auth-server:50051")
+        # SECURITY NOTE: insecure_channel is intentional for intra-cluster traffic.
+        # In Kubernetes, central-auth and hackonomics-app run on the same cluster
+        # network. The x-service-key credential transmitted in metadata is protected
+        # by the cluster network boundary (not exposed outside the cluster).
+        #
+        # Before enabling cross-cluster or internet-facing gRPC:
+        #   Replace grpc.insecure_channel with grpc.secure_channel using
+        #   grpc.ssl_channel_credentials() (TLS) or grpc.local_channel_credentials()
+        #   (mTLS via a service mesh such as Istio/Linkerd).
+        #   See: https://grpc.io/docs/guides/auth/#python
         _channel = grpc.insecure_channel(
             target,
             options=[
@@ -65,6 +75,6 @@ def get_channel() -> grpc.Channel:
                 ("grpc.max_reconnect_backoff_ms", 5_000),
             ],
         )
-        logger.info("[gRPC] Channel created → %s", target)
+        logger.info("[gRPC] Channel created → %s (insecure/intra-cluster)", target)
 
     return _channel
