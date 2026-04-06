@@ -4,6 +4,7 @@ services:
     container_name: myeconocoach-web
     command: gunicorn -c gunicorn.conf.py config.wsgi:application
     env_file:
+      - ../.env.shared
       - ./env/.env.prod
     ports:
       - "8000:8000"
@@ -13,8 +14,6 @@ services:
       redis:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
     networks:
       - default
@@ -100,44 +99,17 @@ services:
       retries: 5
       start_period: 10s
 
-  kafka:
-    image: apache/kafka:4.1.1
-    container_name: myeconocoach-kafka
-    restart: always
-    env_file:
-      - ./env/.env.prod
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_NODE_ID: ${KAFKA_NODE_ID}
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: ${KAFKA_NODE_ID}@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1 || exit 1",
-        ]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
+  # Local Kafka broker removed (ADR-001). All Kafka traffic routes through the
+  # Infra broker (confluentinc/cp-kafka:7.9.0) at kafka:9092 on shared-monitor-net.
+  # outbox-worker, retry-worker-1, retry-worker-2 join shared-monitor-net to
+  # reach it. KAFKA_BOOTSTRAP_SERVERS=kafka:9092 resolves correctly on that network.
 
   celery-worker:
     build: .
     container_name: myeconocoach-celery-worker
     command: celery -A config worker -l info
     env_file:
+      - ../.env.shared
       - ./env/.env.prod
     depends_on:
       pgbouncer:
@@ -153,6 +125,7 @@ services:
     container_name: myeconocoach-celery-beat
     command: celery -A config beat -l info --schedule /tmp/celerybeat-schedule
     env_file:
+      - ../.env.shared
       - ./env/.env.prod
     volumes:
       - celerybeat_data:/app/celerybeat-schedule
@@ -170,25 +143,29 @@ services:
     container_name: myeconocoach-outbox-worker
     command: python manage.py process_outbox
     env_file:
+      - ../.env.shared
       - ./env/.env.prod
     depends_on:
       pgbouncer:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
-    restart: on-failure
+    networks:
+      - default
+      - shared-monitor-net
+    restart: unless-stopped
 
   retry-worker-1:
     build: .
     container_name: myeconocoach-retry-worker-1
     command: python manage.py run_retry_consumer_1
     env_file:
+      - ../.env.shared
       - ./env/.env.prod
     depends_on:
       pgbouncer:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
+    networks:
+      - default
+      - shared-monitor-net
     restart: unless-stopped
 
   retry-worker-2:
@@ -196,20 +173,41 @@ services:
     container_name: myeconocoach-retry-worker-2
     command: python manage.py run_retry_consumer_2
     env_file:
+      - ../.env.shared
       - ./env/.env.prod
     depends_on:
       pgbouncer:
         condition: service_healthy
-      kafka:
-        condition: service_healthy
+    networks:
+      - default
+      - shared-monitor-net
     restart: unless-stopped
+
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:15
+    container_name: myeconocoach-postgres-backup
+    restart: always
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+    volumes:
+      - postgres-backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
   qdrant_data:
-  kafka_data:
   celerybeat_data:
+  postgres-backups:
 
 networks:
   shared-monitor-net:

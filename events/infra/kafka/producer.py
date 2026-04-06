@@ -26,6 +26,7 @@ class KafkaEventProducer:
         self._producer = Producer(
             {
                 "bootstrap.servers": settings.KAFKA_BOOTSTRAP_SERVERS,
+                "acks": "all",  # P0: wait for all in-sync replicas before ACK
                 "delivery.timeout.ms": 10000,  # 10 s max per message
             }
         )

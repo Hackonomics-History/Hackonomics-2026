@@ -218,3 +218,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# gRPC generated stubs (run 'make proto-gen' to regenerate)
+gen/

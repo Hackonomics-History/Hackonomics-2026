@@ -20,6 +20,7 @@ def circuit_breaker(
     failure_threshold: int = 5,
     recovery_timeout: int = 30,
     failure_window: int = 60,
+    should_trip=None,
 ):
     """Redis-backed distributed circuit breaker decorator.
 
@@ -41,6 +42,15 @@ def circuit_breaker(
         failure_threshold: Failures within ``failure_window`` seconds before opening.
         recovery_timeout:  Seconds the circuit stays OPEN before allowing a probe.
         failure_window:    Sliding window in seconds for counting failures.
+        should_trip:       Optional callable ``(exc: Exception) -> bool``.
+                           When provided, an exception is only counted as a circuit
+                           failure when ``should_trip(exc)`` returns ``True``.
+                           When it returns ``False`` the exception is re-raised
+                           immediately without touching the failure counter — useful
+                           for distinguishing gRPC domain errors (UNAUTHENTICATED,
+                           ALREADY_EXISTS) from infrastructure failures (UNAVAILABLE).
+                           When ``None`` (default), all exceptions count as failures,
+                           preserving the original behaviour.
     """
     _open_key = f"cb:{name}:open"
     _failures_key = f"cb:{name}:failures"
@@ -59,7 +69,11 @@ def circuit_breaker(
             except CircuitOpenError:
                 # Propagate without double-counting — already open from a nested call.
                 raise
-            except Exception:
+            except Exception as exc:
+                # If a classifier is provided and says "don't trip", propagate the
+                # exception as a domain error without touching the failure counter.
+                if should_trip is not None and not should_trip(exc):
+                    raise
                 # Sliding-window counter: set TTL only on first entry, then INCR.
                 cache.add(_failures_key, 0, timeout=failure_window)
                 failures = cache.incr(_failures_key)

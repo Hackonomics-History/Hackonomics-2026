@@ -1,7 +1,13 @@
 import uuid
+from contextvars import ContextVar
 
 _INCOMING_HEADER = "HTTP_X_REQUEST_ID"
 _OUTGOING_HEADER = "X-Request-ID"
+
+# Greenlet-safe ContextVar so adapters in the service layer can read the current
+# request ID without receiving a Django ``request`` object.
+# Set by RequestIDMiddleware.__call__ at the start of every request.
+current_request_id: ContextVar[str] = ContextVar("current_request_id", default="")
 
 
 class RequestIDMiddleware:
@@ -22,6 +28,7 @@ class RequestIDMiddleware:
 
     def __call__(self, request):
         request.request_id = request.META.get(_INCOMING_HEADER) or str(uuid.uuid4())
+        current_request_id.set(request.request_id)
         response = self.get_response(request)
         response[_OUTGOING_HEADER] = request.request_id
         return response

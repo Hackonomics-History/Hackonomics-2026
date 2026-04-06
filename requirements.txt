@@ -28,6 +28,7 @@ pytest-json-report
 google-genai
 grpcio
 grpcio-tools
+grpcio-status
 protobuf
 babel
 fastembed
@@ -35,6 +36,7 @@ numpy==1.26.4
 qdrant-client==1.9.1
 django-prometheus
 prometheus-client
+sentry-sdk[django]
 gunicorn==23.0.0
 gevent>=24.2.1
 greenlet>=3.0.0

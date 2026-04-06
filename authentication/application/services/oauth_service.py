@@ -1,7 +1,8 @@
 from typing import Dict
 
-from authentication.adapters.django.auth_service import CentralAuthAdapter
+from authentication.adapters.django.adapter_factory import get_auth_adapter
 from authentication.adapters.django.google_oauth import GoogleOAuthAdapter
+from authentication.adapters.ports import AuthServiceAdapter
 from common.errors.error_codes import ErrorCode
 from common.errors.exceptions import BusinessException
 
@@ -9,7 +10,7 @@ from common.errors.exceptions import BusinessException
 class OAuthService:
     def __init__(self) -> None:
         self.google_adapter = GoogleOAuthAdapter()
-        self.central_auth = CentralAuthAdapter()
+        self.central_auth: AuthServiceAdapter = get_auth_adapter()
 
     def google_login(self, code: str) -> Dict[str, str]:
         try:

@@ -301,6 +301,13 @@ CENTRAL_AUTH_TIMEOUT = env.int(
 CENTRAL_AUTH_CB_FAILURE_THRESHOLD = env.int("CENTRAL_AUTH_CB_FAILURE_THRESHOLD", default=5)
 CENTRAL_AUTH_CB_RECOVERY_TIMEOUT = env.int("CENTRAL_AUTH_CB_RECOVERY_TIMEOUT", default=30)
 
+# gRPC adapter toggle — set CENTRAL_AUTH_USE_GRPC=true to route all Central-Auth
+# calls through the gRPC adapter instead of the HTTP adapter.
+# Defaults to False so existing HTTP behaviour is preserved unless explicitly switched.
+CENTRAL_AUTH_USE_GRPC = env.bool("CENTRAL_AUTH_USE_GRPC", default=False)
+CENTRAL_AUTH_GRPC_TARGET = env("CENTRAL_AUTH_GRPC_TARGET", default="auth-server:50051")
+CENTRAL_AUTH_GRPC_TIMEOUT = env.int("CENTRAL_AUTH_GRPC_TIMEOUT", default=5)
+
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
@@ -346,3 +353,17 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
+
+# ── Sentry (optional; disabled when SENTRY_DSN is empty) ─────────────────────
+_SENTRY_DSN = env("SENTRY_DSN", default="")
+if _SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        environment=ENV,
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+    )

@@ -34,3 +34,29 @@ max_requests_jitter = 50
 accesslog = "-"
 errorlog = "-"
 loglevel = "info"
+
+
+def post_fork(server, worker):
+    """Initialize gRPC gevent integration after each worker forks.
+
+    Ordering constraint (must be respected):
+      1. gevent.monkey.patch_all()  — done automatically by the gevent worker class
+                                      BEFORE this hook is called.
+      2. grpc.experimental.gevent.init_gevent()  — called here, per-worker.
+      3. grpc.insecure_channel(...)  — called lazily on first use inside the worker.
+
+    Importing grpc inside this function body ensures the master process never
+    loads the gRPC C-extension before forking, preventing stale file-descriptor
+    inheritance across workers.
+    """
+    import grpc.experimental.gevent as grpc_gevent  # noqa: PLC0415
+
+    grpc_gevent.init_gevent()
+
+    # Signal the lazy channel module that init has run in this worker.
+    try:
+        from authentication.adapters.django import grpc_channel  # noqa: PLC0415
+
+        grpc_channel.mark_gevent_initialized()
+    except ImportError:
+        pass  # gRPC adapter not yet installed — safe to ignore
