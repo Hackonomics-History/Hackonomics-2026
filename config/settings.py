@@ -73,6 +73,7 @@ DEBUG = not IS_PRODUCTION
 
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 
+# TODO: Restrict to production domains — pre-domain dev stage only.
 # HIGH-4: Lock to explicit host list. Set DJANGO_ALLOWED_HOSTS in env.
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
@@ -93,6 +94,7 @@ INSTALLED_APPS = [
     "authentication.apps.AuthenticationConfig",
     "simulation",
     # Third-party
+    "django_celery_beat",
     "drf_spectacular",
     "rest_framework",
     "corsheaders",
@@ -190,10 +192,23 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_TIMEZONE = "UTC"
 CELERY_ENABLE_UTC = True
 
+# Resilient Beat scheduler: stores schedule in PostgreSQL (via django-celery-beat)
+# and monitors Redis broker health with an in-process circuit breaker.
+# Falls back gracefully to DB-only scheduling when Redis is unreachable.
+CELERY_BEAT_SCHEDULER = "config.celery_scheduler.ResilientBeatScheduler"
+
 CELERY_BEAT_SCHEDULE = {
     "fetch-business-news-every-6-hours": {
         "task": "news.tasks.fetch_business_news",
         "schedule": crontab(hour="*/6", minute=0),
+    },
+    # Proactively warm the JWKS cache from Central-auth every hour.
+    # Keeps the fresh window alive before it expires, preventing synchronous
+    # JWKS fetches on the hot authentication path. Runs 5 minutes before the
+    # hour so the fresh copy is ready before the 3-minute TTL window closes.
+    "refresh-jwks-cache-every-hour": {
+        "task": "authentication.tasks.refresh_jwks_cache",
+        "schedule": crontab(minute=55),  # :55 of every hour
     },
 }
 
@@ -213,9 +228,21 @@ REST_FRAMEWORK = {
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {
+            "()": "common.logging.RequestIDFilter",
+        },
+    },
+    "formatters": {
+        "json": {
+            "()": "common.logging.JsonFormatter",
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "json",
+            "filters": ["request_id"],
         },
     },
     "root": {
@@ -241,12 +268,14 @@ SPECTACULAR_SETTINGS = {
 
 # React
 CORS_ALLOW_CREDENTIALS = True
+# TODO: Restrict to production domains — pre-domain dev stage only.
 # CRITICAL: PROD CHANGE REQUIRED — replace localhost origins with production frontend domain
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
 
+# TODO: Restrict to production domains — pre-domain dev stage only.
 # CRITICAL: PROD CHANGE REQUIRED — replace localhost origins with production frontend domain
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
@@ -365,5 +394,6 @@ if _SENTRY_DSN:
         integrations=[DjangoIntegration()],
         environment=ENV,
         traces_sample_rate=0.1,
+        profiles_sample_rate=0.1,
         send_default_pii=False,
     )
