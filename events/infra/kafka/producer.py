@@ -26,9 +26,43 @@ class KafkaEventProducer:
         self._producer = Producer(
             {
                 "bootstrap.servers": settings.KAFKA_BOOTSTRAP_SERVERS,
+                "acks": "all",  # P0: wait for all in-sync replicas before ACK
                 "delivery.timeout.ms": 10000,  # 10 s max per message
             }
         )
+
+    def publish_raw(
+        self, topic: str, value: bytes, headers: list | None = None
+    ) -> bool:
+        """Publish pre-serialised bytes with optional Kafka headers.
+
+        Used by the retry router to forward original message bytes to retry
+        topics without re-serialising, preserving the exact original payload.
+        """
+        delivery_result: dict = {"success": False}
+
+        def _on_delivery(err, msg):
+            if err:
+                kafka_produced_total.labels(status="failure").inc()
+                logger.error("Kafka delivery failed [topic=%s]: %s", topic, err)
+            else:
+                kafka_produced_total.labels(status="success").inc()
+                delivery_result["success"] = True
+
+        try:
+            self._producer.produce(
+                topic,
+                value=value,
+                headers=headers or [],
+                callback=_on_delivery,
+            )
+            self._producer.flush()
+        except Exception as exc:
+            kafka_produced_total.labels(status="failure").inc()
+            logger.error("Kafka produce_raw error: %s", type(exc).__name__)
+            return False
+
+        return delivery_result["success"]
 
     def publish(self, topic: str, event: dict) -> bool:
         delivery_result: dict = {"success": False}

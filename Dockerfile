@@ -10,6 +10,8 @@ RUN apt-get update \
     build-essential \
     libpq-dev \
     librdkafka-dev \
+    libffi-dev \
+    python3-dev \
     pkg-config \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*

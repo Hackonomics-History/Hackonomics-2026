@@ -1,0 +1,192 @@
+name: CI/CD — Hackonomics-2026 (Django)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/hackonomics-history/hackonomics-2026
+  INFRA_REPO: syjoe02/Hackonomics-Infra
+  INFRA_VALUES: helm/hackonomics-infra/values.yaml
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. Test
+  # ──────────────────────────────────────────────
+  test:
+    name: Django Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: hackonomics_test
+          POSTGRES_USER: hackonomics
+          POSTGRES_PASSWORD: test-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U hackonomics"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libpq-dev librdkafka-dev libffi-dev pkg-config
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          # Install CPU-only torch first to avoid downloading GPU wheels
+          pip install torch==2.3.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: Create test env file
+        run: |
+          mkdir -p env
+          cat > env/.env << 'EOF'
+          DJANGO_ENV=test
+          SECRET_KEY=ci-test-secret-key-not-used-in-production
+          DEBUG=true
+          ALLOWED_HOSTS=localhost,127.0.0.1
+          DATABASE_URL=postgres://hackonomics:test-password@localhost:5432/hackonomics_test
+          REDIS_URL=redis://localhost:6379/0
+          CENTRAL_AUTH_BASE_URL=http://localhost:8081
+          CENTRAL_AUTH_SERVICE_KEY=ci-test-service-key
+          EXPECTED_JWT_ISSUER=http://localhost:4444/
+          EXPECTED_JWT_AUDIENCE=hackonomics
+          KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+          SENTRY_DSN=
+          EOF
+
+      - name: Run migrations
+        run: python manage.py migrate --run-syncdb
+
+      - name: Run tests
+        run: |
+          pytest \
+            --ignore=loadtest \
+            -v \
+            --tb=short \
+            -q
+
+  # ──────────────────────────────────────────────
+  # 2. Build & Push Docker image to GHCR
+  # ──────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive image tag
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="sha-$(git rev-parse --short=8 HEAD)"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_TAG=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ──────────────────────────────────────────────
+  # 3. Update Infra repo → triggers ArgoCD sync
+  # ──────────────────────────────────────────────
+  update-infra:
+    name: Update Infra values.yaml
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: |
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+
+    steps:
+      - name: Checkout Infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.INFRA_REPO }}
+          token: ${{ secrets.INFRA_REPO_PAT }}
+          path: infra
+
+      - name: Install yq
+        uses: mikefarah/yq@v4.44.3
+
+      - name: Update hackonomics-app image tags in values.yaml
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          yq e '.hackonomics-app.web.image.repository = "${{ env.IMAGE_NAME }}"' -i infra/${{ env.INFRA_VALUES }}
+          yq e ".hackonomics-app.web.image.tag = \"${IMAGE_TAG}\"" -i infra/${{ env.INFRA_VALUES }}
+          yq e '.hackonomics-app.worker.image.repository = "${{ env.IMAGE_NAME }}"' -i infra/${{ env.INFRA_VALUES }}
+          yq e ".hackonomics-app.worker.image.tag = \"${IMAGE_TAG}\"" -i infra/${{ env.INFRA_VALUES }}
+          yq e '.hackonomics-app.beat.image.repository = "${{ env.IMAGE_NAME }}"' -i infra/${{ env.INFRA_VALUES }}
+          yq e ".hackonomics-app.beat.image.tag = \"${IMAGE_TAG}\"" -i infra/${{ env.INFRA_VALUES }}
+
+      - name: Commit and push
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: |
+          cd infra
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ${{ env.INFRA_VALUES }}
+          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore(hackonomics-app): update image tag to ${IMAGE_TAG} [skip ci]"
+          git push

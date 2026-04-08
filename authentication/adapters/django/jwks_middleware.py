@@ -13,13 +13,28 @@ from django.core.cache import cache
 from django.http import HttpResponse
 from rest_framework.authentication import BaseAuthentication
 
+from common.resilience import circuit_breaker, retry_transient
+
 logger = logging.getLogger(__name__)
 
 _JWKS_CACHE_KEY = "ory_jwks_data"
+_JWKS_STALE_CACHE_KEY = "ory_jwks_stale"  # indefinite copy served during outages
 _JWKS_DEFAULT_TTL = 300  # 5 minutes
 # Lock key used to rate-limit JWKS force-refresh (prevents DoS amplification)
 _JWKS_REFRESH_LOCK_KEY = "ory_jwks_refresh_lock"
 _JWKS_REFRESH_LOCK_TTL = 30  # seconds — only one refresh per 30-second window
+
+
+@circuit_breaker("jwks_fetch", failure_threshold=3, recovery_timeout=20)
+@retry_transient(max_attempts=2, wait_seconds=0.1)
+def _jwks_http_get(url: str, timeout: int) -> requests.Response:
+    """HTTP GET for JWKS with circuit breaker (outer) and retry (inner).
+
+    Circuit opens after 3 failures in 60s; stays open for 20s.
+    When open, callers fall through to the stale-cache path immediately
+    without queuing a 5-second timeout wait.
+    """
+    return requests.get(url, timeout=timeout)
 
 
 @dataclass
@@ -276,13 +291,23 @@ class JWKSMiddleware:
         timeout = getattr(settings, "CENTRAL_AUTH_TIMEOUT", 5)
 
         try:
-            resp = requests.get(jwks_url, timeout=timeout)
+            resp = _jwks_http_get(jwks_url, timeout)
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
-            # Never surface the URL or raw error to callers
+            # Never surface the URL or raw error to callers.
             logger.error("JWKS fetch error: %s", type(exc).__name__)
+            # Fall back to stale keys rather than rejecting every request during
+            # a brief Kratos outage. Keys rotate infrequently; stale is safe.
+            stale = cache.get(_JWKS_STALE_CACHE_KEY)
+            if stale is not None:
+                logger.warning(
+                    "Serving stale JWKS after fetch failure (%s)", type(exc).__name__
+                )
+                return stale
             raise jwt.InvalidTokenError("Token cannot be validated: JWKS unavailable") from None
 
         cache.set(_JWKS_CACHE_KEY, data, timeout=ttl)
+        # Store an indefinite stale copy — served only when live fetch fails.
+        cache.set(_JWKS_STALE_CACHE_KEY, data, timeout=None)
         return data

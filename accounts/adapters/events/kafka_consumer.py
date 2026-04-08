@@ -6,27 +6,45 @@ from django.conf import settings
 from django.db import transaction
 
 from accounts.application.usecases.event_router import AccountEventRouter
+from events.infra.kafka.retry_router import publish_to_retry
 
 logger = logging.getLogger(__name__)
 
 TOPIC = "user-activities"
 
 
-def start_kafka_consumer() -> None:
-    """Consume events from Kafka with at-least-once delivery semantics.
+def _retry_attempt(msg) -> int:
+    """Read the retry_attempt header from a Kafka message (default 0)."""
+    for key, value in (msg.headers() or []):
+        if key == "retry_attempt":
+            try:
+                return int(value.decode())
+            except (ValueError, UnicodeDecodeError):
+                return 0
+    return 0
 
-    Manual offset commit strategy:
-      - auto.commit is disabled.
-      - The offset is committed ONLY after the DB transaction for the event
-        succeeds.  If processing fails the offset is NOT committed, so Kafka
-        will redeliver the message on the next poll.
-      - AccountEventRouter.route() must be idempotent (skip duplicate event_id).
+
+def start_kafka_consumer() -> None:
+    """Consume events from Kafka with bounded retry via tiered retry topics.
+
+    Delivery semantics
+    ------------------
+    - auto.commit is disabled; offsets are committed manually after each outcome.
+    - Processing success → commit offset, continue.
+    - Processing failure → route to user-activities.retry-1 (or higher tier if
+      already a retry message), then commit offset on the source topic.
+      The message is NOT redelivered on this topic; the retry consumer handles it.
+    - Decode error      → route directly to user-activities.dlt (not retried —
+      a malformed payload will never recover), then commit offset.
+
+    Consumers must de-duplicate by event_id to handle at-least-once redelivery
+    across retry tiers.
     """
     consumer = Consumer(
         {
             "bootstrap.servers": settings.KAFKA_BOOTSTRAP_SERVERS,
             "group.id": "accounts-service",
-            "enable.auto.commit": False,   # manual commit after DB write
+            "enable.auto.commit": False,
             "auto.offset.reset": "earliest",
         }
     )
@@ -45,34 +63,42 @@ def start_kafka_consumer() -> None:
                 logger.error("Kafka consumer error: %s", msg.error())
                 continue
 
+            # ── Decode ──────────────────────────────────────────────────────
             try:
                 event = json.loads(msg.value().decode("utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                # Log topic/partition/offset so the raw message can be recovered
-                # from Kafka's retention window before committing past it.
                 logger.error(
                     "Kafka message decode error: %s | "
-                    "topic=%s partition=%d offset=%d — committing to skip unparseable payload",
+                    "topic=%s partition=%d offset=%d — routing to DLT",
                     type(exc).__name__,
                     msg.topic(),
                     msg.partition(),
                     msg.offset(),
                 )
+                # Decode errors go directly to DLT — they are not transient.
+                publish_to_retry(msg.value(), msg.headers(), attempt=3)
                 consumer.commit(asynchronous=False)
                 continue
 
+            # ── Process ─────────────────────────────────────────────────────
             try:
                 with transaction.atomic():
                     router.route(event)
-                # Commit offset only after successful DB write — at-least-once
                 consumer.commit(asynchronous=False)
+
             except Exception as exc:
+                attempt = _retry_attempt(msg)
                 logger.error(
-                    "Event processing failed (event_id=%s): %s — offset NOT committed",
+                    "Event processing failed (event_id=%s attempt=%d): %s — routing to retry",
                     event.get("event_id"),
+                    attempt,
                     type(exc).__name__,
                 )
-                # Do not commit; Kafka will redeliver on next poll
+                # Route to the next retry tier; commit past this message so the
+                # main consumer group is never blocked by a single bad event.
+                publish_to_retry(msg.value(), msg.headers(), attempt + 1)
+                consumer.commit(asynchronous=False)
+
     except KeyboardInterrupt:
         logger.info("Kafka consumer: KeyboardInterrupt received, stopping")
     finally:

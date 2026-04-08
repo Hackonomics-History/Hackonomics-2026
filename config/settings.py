@@ -73,6 +73,7 @@ DEBUG = not IS_PRODUCTION
 
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 
+# TODO: Restrict to production domains — pre-domain dev stage only.
 # HIGH-4: Lock to explicit host list. Set DJANGO_ALLOWED_HOSTS in env.
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
@@ -93,6 +94,7 @@ INSTALLED_APPS = [
     "authentication.apps.AuthenticationConfig",
     "simulation",
     # Third-party
+    "django_celery_beat",
     "drf_spectacular",
     "rest_framework",
     "corsheaders",
@@ -109,6 +111,7 @@ MIDDLEWARE = [
     "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "common.middleware.request_id.RequestIDMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -189,10 +192,23 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_TIMEZONE = "UTC"
 CELERY_ENABLE_UTC = True
 
+# Resilient Beat scheduler: stores schedule in PostgreSQL (via django-celery-beat)
+# and monitors Redis broker health with an in-process circuit breaker.
+# Falls back gracefully to DB-only scheduling when Redis is unreachable.
+CELERY_BEAT_SCHEDULER = "config.celery_scheduler.ResilientBeatScheduler"
+
 CELERY_BEAT_SCHEDULE = {
     "fetch-business-news-every-6-hours": {
         "task": "news.tasks.fetch_business_news",
         "schedule": crontab(hour="*/6", minute=0),
+    },
+    # Proactively warm the JWKS cache from Central-auth every hour.
+    # Keeps the fresh window alive before it expires, preventing synchronous
+    # JWKS fetches on the hot authentication path. Runs 5 minutes before the
+    # hour so the fresh copy is ready before the 3-minute TTL window closes.
+    "refresh-jwks-cache-every-hour": {
+        "task": "authentication.tasks.refresh_jwks_cache",
+        "schedule": crontab(minute=55),  # :55 of every hour
     },
 }
 
@@ -212,9 +228,21 @@ REST_FRAMEWORK = {
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {
+            "()": "common.logging.RequestIDFilter",
+        },
+    },
+    "formatters": {
+        "json": {
+            "()": "common.logging.JsonFormatter",
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "json",
+            "filters": ["request_id"],
         },
     },
     "root": {
@@ -240,12 +268,14 @@ SPECTACULAR_SETTINGS = {
 
 # React
 CORS_ALLOW_CREDENTIALS = True
+# TODO: Restrict to production domains — pre-domain dev stage only.
 # CRITICAL: PROD CHANGE REQUIRED — replace localhost origins with production frontend domain
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
 
+# TODO: Restrict to production domains — pre-domain dev stage only.
 # CRITICAL: PROD CHANGE REQUIRED — replace localhost origins with production frontend domain
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
@@ -294,6 +324,19 @@ CENTRAL_AUTH_TIMEOUT = env.int(
     default=5,
 )
 
+# Circuit breaker settings for Central-auth and JWKS fetch calls.
+# These document the intended thresholds; the values are used by
+# common/resilience/circuit_breaker.py via auth_service and jwks_middleware.
+CENTRAL_AUTH_CB_FAILURE_THRESHOLD = env.int("CENTRAL_AUTH_CB_FAILURE_THRESHOLD", default=5)
+CENTRAL_AUTH_CB_RECOVERY_TIMEOUT = env.int("CENTRAL_AUTH_CB_RECOVERY_TIMEOUT", default=30)
+
+# gRPC adapter toggle — set CENTRAL_AUTH_USE_GRPC=true to route all Central-Auth
+# calls through the gRPC adapter instead of the HTTP adapter.
+# Defaults to False so existing HTTP behaviour is preserved unless explicitly switched.
+CENTRAL_AUTH_USE_GRPC = env.bool("CENTRAL_AUTH_USE_GRPC", default=False)
+CENTRAL_AUTH_GRPC_TARGET = env("CENTRAL_AUTH_GRPC_TARGET", default="auth-server:50051")
+CENTRAL_AUTH_GRPC_TIMEOUT = env.int("CENTRAL_AUTH_GRPC_TIMEOUT", default=5)
+
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
@@ -303,8 +346,16 @@ DATABASES = {
         "NAME": env("DB_NAME", default="myeconocoach"),
         "USER": env("DB_USER", default="econ_user"),
         "PASSWORD": env("DB_PASSWORD", default="econ_password"),
+        # In Docker, point at PgBouncer: DB_HOST=pgbouncer DB_PORT=5432.
+        # For local dev without PgBouncer, set DB_HOST=localhost DB_PORT=5431.
         "HOST": env("DB_HOST", default="localhost"),
         "PORT": env("DB_PORT", default="5431"),
+        # CRITICAL: must be 0 when routing through PgBouncer in transaction-pooling
+        # mode. Django must not hold persistent connections — PgBouncer owns the pool.
+        "CONN_MAX_AGE": 0,
+        # CRITICAL: server-side (named) cursors require session-level state that is
+        # lost between transactions under PgBouncer transaction pooling. Disable them.
+        "DISABLE_SERVER_SIDE_CURSORS": True,
     }
 }
 
@@ -331,3 +382,18 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
+
+# ── Sentry (optional; disabled when SENTRY_DSN is empty) ─────────────────────
+_SENTRY_DSN = env("SENTRY_DSN", default="")
+if _SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        environment=ENV,
+        traces_sample_rate=0.1,
+        profiles_sample_rate=0.1,
+        send_default_pii=False,
+    )

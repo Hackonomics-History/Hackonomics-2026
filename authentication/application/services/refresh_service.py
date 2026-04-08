@@ -1,11 +1,12 @@
-from authentication.adapters.django.auth_service import CentralAuthAdapter
+from authentication.adapters.django.adapter_factory import get_auth_adapter
+from authentication.adapters.ports import AuthServiceAdapter
 from common.errors.error_codes import ErrorCode
 from common.errors.exceptions import BusinessException
 
 
 class RefreshService:
     def __init__(self):
-        self.central_auth = CentralAuthAdapter()
+        self.central_auth: AuthServiceAdapter = get_auth_adapter()
 
     def refresh(self, refresh_token: str) -> dict:
         if not refresh_token:
