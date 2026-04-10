@@ -70,18 +70,21 @@ jobs:
         run: |
           mkdir -p env
           cat > env/.env << 'EOF'
-          DJANGO_ENV=test
-          SECRET_KEY=ci-test-secret-key-not-used-in-production
+          DJANGO_ENV=local
+          DJANGO_SECRETKEY=ci-test-secret-key-for-testing 
           DEBUG=true
-          ALLOWED_HOSTS=localhost,127.0.0.1
-          DATABASE_URL=postgres://hackonomics:test-password@localhost:5432/hackonomics_test
+          DB_NAME=hackonomics_test
+          DB_USER=hackonomics
+          DB_PASSWORD=test-password
+          DB_HOST=localhost
+          DB_PORT=5432
+
           REDIS_URL=redis://localhost:6379/0
           CENTRAL_AUTH_BASE_URL=http://localhost:8081
           CENTRAL_AUTH_SERVICE_KEY=ci-test-service-key
           EXPECTED_JWT_ISSUER=http://localhost:4444/
           EXPECTED_JWT_AUDIENCE=hackonomics
           KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-          SENTRY_DSN=
           EOF
 
       - name: Run migrations
@@ -166,7 +169,9 @@ jobs:
           path: infra
 
       - name: Install yq
-        uses: mikefarah/yq@v4.44.3
+        run: |
+          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+          sudo chmod +x /usr/bin/yq
 
       - name: Update hackonomics-app image tags in values.yaml
         env:
