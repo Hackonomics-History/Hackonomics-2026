@@ -4,6 +4,7 @@ import time
 
 from django.db import transaction
 
+from common.middleware.request_id import current_request_id
 from events.infra.kafka.producer import KafkaEventProducer
 from events.infra.outbox_models import OutboxEvent
 
@@ -56,6 +57,10 @@ def process_outbox_batch() -> int:
             "event_type": event.event_type,
             "payload": event.payload,
             "occurred_at": event.created_at.isoformat(),
+            # Loki label fields — parsed by the Promtail kafka scrape pipeline
+            "service_name": "hackonomics-app",
+            "request_id": current_request_id.get(""),
+            "level": "info",
         }
 
         delivered = producer.publish(TOPIC, message)

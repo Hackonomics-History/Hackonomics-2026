@@ -1,8 +1,14 @@
+import re
 import uuid
 from contextvars import ContextVar
 
 _INCOMING_HEADER = "HTTP_X_REQUEST_ID"
 _OUTGOING_HEADER = "X-Request-ID"
+
+# Only accept header values that look like safe trace IDs (alphanumeric + - _).
+# Reject anything else and generate a fresh UUID so attacker-controlled strings
+# never reach Kafka messages, log fields, or downstream ContextVar consumers.
+_REQUEST_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
 
 # Greenlet-safe ContextVar so adapters in the service layer can read the current
 # request ID without receiving a Django ``request`` object.
@@ -27,7 +33,8 @@ class RequestIDMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        request.request_id = request.META.get(_INCOMING_HEADER) or str(uuid.uuid4())
+        raw = request.META.get(_INCOMING_HEADER, "")
+        request.request_id = raw if _REQUEST_ID_RE.match(raw) else str(uuid.uuid4())
         current_request_id.set(request.request_id)
         response = self.get_response(request)
         response[_OUTGOING_HEADER] = request.request_id

@@ -36,7 +36,9 @@ class TestCircuitBreakerClosed:
             return "ok"
 
         fn()
-        mock_cache.delete.assert_called_once_with(_FAILURES_KEY)
+        # On success the wrapper deletes both the failure counter and the probe key.
+        deleted_keys = [c.args[0] for c in mock_cache.delete.call_args_list]
+        assert _FAILURES_KEY in deleted_keys
 
     def test_propagates_exception(self, mock_cache):
         @_make_breaker()
@@ -63,15 +65,24 @@ class TestCircuitBreakerClosed:
 class TestCircuitBreakerOpens:
     def test_opens_after_reaching_threshold(self, mock_cache):
         mock_cache.incr.return_value = 3  # exactly at threshold
+        base_recovery = 30
 
-        @_make_breaker(threshold=3, recovery=30)
+        @_make_breaker(threshold=3, recovery=base_recovery)
         def fn():
             raise ValueError()
 
         with pytest.raises(ValueError):
             fn()
 
-        mock_cache.set.assert_called_once_with(_OPEN_KEY, 1, timeout=30)
+        # Jitter adds ±15% to recovery_timeout, so the actual timeout is in [26, 34].
+        open_calls = [c for c in mock_cache.set.call_args_list if c.args[0] == _OPEN_KEY]
+        assert len(open_calls) == 1
+        actual_timeout = open_calls[0].kwargs["timeout"]
+        jitter_pct = 0.15
+        assert base_recovery * (1 - jitter_pct) <= actual_timeout <= base_recovery * (1 + jitter_pct), (
+            f"Expected timeout in [{base_recovery * (1 - jitter_pct)}, "
+            f"{base_recovery * (1 + jitter_pct)}], got {actual_timeout}"
+        )
         mock_cache.delete.assert_called_with(_FAILURES_KEY)
 
     def test_does_not_open_below_threshold(self, mock_cache):

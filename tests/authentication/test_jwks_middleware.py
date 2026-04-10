@@ -7,7 +7,9 @@ import pytest
 from authentication.adapters.django.jwks_middleware import (
     JWKSMiddleware,
     _JWKS_STALE_CACHE_KEY,
+    _JWKS_STALE_TTL,
     _JWKS_CACHE_KEY,
+    _JWKS_DEFAULT_TTL,
 )
 from common.resilience.circuit_breaker import CircuitOpenError
 
@@ -25,7 +27,7 @@ class TestFetchAndCacheJwks:
 
     def test_caches_fresh_jwks_on_success(self, settings):
         settings.JWKS_URL = "http://auth/.well-known/jwks.json"
-        settings.JWKS_CACHE_TTL = 300
+        settings.JWKS_CACHE_TTL = _JWKS_DEFAULT_TTL  # 180s (3 min)
         settings.CENTRAL_AUTH_TIMEOUT = 5
 
         resp = MagicMock()
@@ -39,11 +41,15 @@ class TestFetchAndCacheJwks:
             result = middleware._fetch_and_cache_jwks()
 
         assert result == _MOCK_JWKS
-        # Both live TTL and indefinite stale copies must be stored
+        # Fresh copy stored with 3-min TTL; stale copy stored with 30-min TTL
         calls = {c.args[0]: c for c in mock_cache.set.call_args_list}
         assert _JWKS_CACHE_KEY in calls
         assert _JWKS_STALE_CACHE_KEY in calls
-        assert calls[_JWKS_STALE_CACHE_KEY].args[2] is None  # timeout=None → indefinite
+        # timeout is passed as a keyword arg; fall back to positional index if needed
+        def _timeout(c):
+            return c.kwargs.get("timeout", c.args[2] if len(c.args) > 2 else None)
+        assert _timeout(calls[_JWKS_CACHE_KEY]) == _JWKS_DEFAULT_TTL      # 180s fresh
+        assert _timeout(calls[_JWKS_STALE_CACHE_KEY]) == _JWKS_STALE_TTL  # 1800s stale
 
     def test_serves_stale_cache_when_fetch_raises(self, settings):
         settings.JWKS_URL = "http://auth/.well-known/jwks.json"

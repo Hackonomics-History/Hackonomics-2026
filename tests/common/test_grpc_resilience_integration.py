@@ -85,7 +85,11 @@ class TestCircuitBreakerGrpcComposition:
         with pytest.raises(grpc.RpcError):
             rpc()
 
-        mock_cache.set.assert_called_with("cb:integ_svc:open", 1, timeout=30)
+        # The circuit sets both the open key (jittered ±15%) and the probe key.
+        open_calls = [c for c in mock_cache.set.call_args_list if c.args[0] == "cb:integ_svc:open"]
+        assert len(open_calls) == 1
+        actual_timeout = open_calls[0].kwargs["timeout"]
+        assert 26 <= actual_timeout <= 35, f"Expected jittered timeout near 30s, got {actual_timeout}"
 
     def test_circuit_never_opens_on_unauthenticated(self, mock_cache):
         """Repeated UNAUTHENTICATED errors must never open the circuit."""

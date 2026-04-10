@@ -107,7 +107,11 @@ class TestCircuitBreakerWithShouldTrip:
         with pytest.raises(grpc.RpcError):
             fn()
 
-        mock_cache.set.assert_called_once_with(_OPEN_KEY, 1, timeout=30)
+        # The circuit sets both the open key (jittered ±15%) and the probe key.
+        open_calls = [c for c in mock_cache.set.call_args_list if c.args[0] == _OPEN_KEY]
+        assert len(open_calls) == 1
+        actual_timeout = open_calls[0].kwargs["timeout"]
+        assert 26 <= actual_timeout <= 35, f"Expected jittered timeout near 30s, got {actual_timeout}"
 
     def test_circuit_does_not_open_on_domain_errors(self, mock_cache):
         """Many UNAUTHENTICATED errors must never open the circuit."""
