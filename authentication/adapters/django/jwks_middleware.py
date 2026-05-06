@@ -13,24 +13,31 @@ from django.core.cache import cache
 from django.http import HttpResponse
 from rest_framework.authentication import BaseAuthentication
 
+from authentication.adapters.django import blacklist_cache
 from common.resilience import circuit_breaker, retry_transient
 
 logger = logging.getLogger(__name__)
 
 _JWKS_CACHE_KEY = "ory_jwks_data"
-_JWKS_STALE_CACHE_KEY = "ory_jwks_stale"  # indefinite copy served during outages
-_JWKS_DEFAULT_TTL = 300  # 5 minutes
+_JWKS_STALE_CACHE_KEY = "ory_jwks_stale"  # served during outages, up to stale TTL
+_JWKS_DEFAULT_TTL = 180  # 3 minutes — fresh window
+_JWKS_STALE_TTL = 1800   # 30 minutes — stale window; prevents stale keys served indefinitely
 # Lock key used to rate-limit JWKS force-refresh (prevents DoS amplification)
 _JWKS_REFRESH_LOCK_KEY = "ory_jwks_refresh_lock"
 _JWKS_REFRESH_LOCK_TTL = 30  # seconds — only one refresh per 30-second window
 
 
-@circuit_breaker("jwks_fetch", failure_threshold=3, recovery_timeout=20)
+@circuit_breaker(
+    "jwks_fetch",
+    failure_threshold=getattr(settings, "CENTRAL_AUTH_CB_FAILURE_THRESHOLD", 5),
+    recovery_timeout=getattr(settings, "CENTRAL_AUTH_CB_RECOVERY_TIMEOUT", 30),
+)
 @retry_transient(max_attempts=2, wait_seconds=0.1)
 def _jwks_http_get(url: str, timeout: int) -> requests.Response:
     """HTTP GET for JWKS with circuit breaker (outer) and retry (inner).
 
-    Circuit opens after 3 failures in 60s; stays open for 20s.
+    Circuit opens after CENTRAL_AUTH_CB_FAILURE_THRESHOLD failures in 60s;
+    stays open for CENTRAL_AUTH_CB_RECOVERY_TIMEOUT seconds (default: 5 failures / 30s).
     When open, callers fall through to the stale-cache path immediately
     without queuing a 5-second timeout wait.
     """
@@ -112,9 +119,10 @@ class JWKSMiddleware:
         # In test mode inject a stable test identity so the full middleware chain
         # runs without a real JWKS endpoint. Guarded to never activate in production.
         if getattr(settings, "TESTING", False):
-            assert not getattr(settings, "IS_PRODUCTION", False), (
-                "TESTING=True must never be set in a production environment"
-            )
+            if getattr(settings, "IS_PRODUCTION", False):
+                raise RuntimeError(
+                    "TESTING=True must never be set in a production environment"
+                )
             request.user = OryIdentityProxy(
                 ory_id="00000000-0000-0000-0000-000000000001",
                 email="test@example.com",
@@ -129,6 +137,13 @@ class JWKSMiddleware:
         if any(request.path.startswith(prefix) for prefix in self._SKIP_PREFIXES):
             return self.get_response(request)
 
+        # SERVICE_KEY blacklist check — evaluated before JWT validation so that
+        # a blocked service key is rejected even if it carries a technically valid JWT.
+        service_key = request.META.get("HTTP_X_SERVICE_KEY", "")
+        if service_key and blacklist_cache.is_blacklisted("SERVICE_KEY", service_key):
+            logger.warning("Request blocked: SERVICE_KEY is blacklisted")
+            return HttpResponse(status=403)
+
         token = self._extract_token(request)
 
         if not token:
@@ -137,8 +152,21 @@ class JWKSMiddleware:
 
         try:
             payload = self._decode_token(token)
+            kratos_id = payload["sub"]
+            jti = payload.get("jti")
+
+            # USER blacklist check — block even if the token is cryptographically valid.
+            if blacklist_cache.is_blacklisted("USER", kratos_id):
+                logger.warning("Request blocked: USER kratos_id is blacklisted")
+                return HttpResponse(status=403)
+
+            # JTI blacklist check — block a specific token by its unique ID.
+            if jti and blacklist_cache.is_blacklisted("JTI", jti):
+                logger.warning("Request blocked: JWT jti is blacklisted")
+                return HttpResponse(status=403)
+
             request.user = OryIdentityProxy(
-                ory_id=payload["sub"],
+                ory_id=kratos_id,
                 email=payload.get("email", ""),
             )
         except jwt.ExpiredSignatureError:
@@ -308,6 +336,7 @@ class JWKSMiddleware:
             raise jwt.InvalidTokenError("Token cannot be validated: JWKS unavailable") from None
 
         cache.set(_JWKS_CACHE_KEY, data, timeout=ttl)
-        # Store an indefinite stale copy — served only when live fetch fails.
-        cache.set(_JWKS_STALE_CACHE_KEY, data, timeout=None)
+        # Store a bounded stale copy (30 min) — served only when live fetch fails.
+        # Bounded TTL ensures rotated-away keys cannot be served indefinitely.
+        cache.set(_JWKS_STALE_CACHE_KEY, data, timeout=_JWKS_STALE_TTL)
         return data

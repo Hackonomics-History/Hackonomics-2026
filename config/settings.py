@@ -29,16 +29,16 @@ IS_PRODUCTION = ENV == "prod"
 # HIGH-6: Fail-fast strict mode — refuse to start in production with insecure defaults.
 if IS_PRODUCTION:
     _insecure: list[str] = []
-    _secret_key = env("DJANGO_SECRETKEY", default="")
+    _secret_key = env("DJANGO_SECRET_KEY", default="")
     if not _secret_key or "django-insecure" in _secret_key:
-        _insecure.append("DJANGO_SECRETKEY is insecure or empty")
+        _insecure.append("DJANGO_SECRET_KEY is insecure or empty")
     if len(_secret_key) < 50:
-        _insecure.append("DJANGO_SECRETKEY must be at least 50 characters in production")
-    _db_pass = env("DB_PASSWORD", default="")
+        _insecure.append("DJANGO_SECRET_KEY must be at least 50 characters in production")
+    _db_pass = env("POSTGRES_PASSWORD", default="")
     if not _db_pass or _db_pass == "econ_password":
-        _insecure.append("DB_PASSWORD is insecure or empty")
+        _insecure.append("POSTGRES_PASSWORD is insecure or empty")
     if len(_db_pass) < 12:
-        _insecure.append("DB_PASSWORD must be at least 12 characters in production")
+        _insecure.append("POSTGRES_PASSWORD must be at least 12 characters in production")
     if not env("EXPECTED_JWT_ISSUER", default=""):
         _insecure.append("EXPECTED_JWT_ISSUER is not set")
     if not env("EXPECTED_JWT_AUDIENCE", default=""):
@@ -66,7 +66,7 @@ if IS_PRODUCTION:
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = env("DJANGO_SECRETKEY")
+SECRET_KEY = env("DJANGO_SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = not IS_PRODUCTION
@@ -343,13 +343,13 @@ CENTRAL_AUTH_GRPC_TIMEOUT = env.int("CENTRAL_AUTH_GRPC_TIMEOUT", default=5)
 DATABASES = {
     "default": {
         "ENGINE": "django_prometheus.db.backends.postgresql",
-        "NAME": env("DB_NAME", default="myeconocoach"),
-        "USER": env("DB_USER", default="econ_user"),
-        "PASSWORD": env("DB_PASSWORD", default="econ_password"),
-        # In Docker, point at PgBouncer: DB_HOST=pgbouncer DB_PORT=5432.
-        # For local dev without PgBouncer, set DB_HOST=localhost DB_PORT=5431.
-        "HOST": env("DB_HOST", default="localhost"),
-        "PORT": env("DB_PORT", default="5431"),
+        "NAME": env("POSTGRES_DB", default="myeconocoach"),
+        "USER": env("POSTGRES_USER", default="econ_user"),
+        "PASSWORD": env("POSTGRES_PASSWORD", default="econ_password"),
+        # In Docker, point at PgBouncer: POSTGRES_HOST=pgbouncer POSTGRES_PORT=5432.
+        # For local dev without PgBouncer, set POSTGRES_HOST=localhost POSTGRES_PORT=5431.
+        "HOST": env("POSTGRES_HOST", default="localhost"),
+        "PORT": env("POSTGRES_PORT", default="5431"),
         # CRITICAL: must be 0 when routing through PgBouncer in transaction-pooling
         # mode. Django must not hold persistent connections — PgBouncer owns the pool.
         "CONN_MAX_AGE": 0,
