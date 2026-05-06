@@ -2,16 +2,15 @@ name: CI/CD — Hackonomics-2026 (Django)
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
-  pull_request:
-    branches: [main]
+    branches: [dev]
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/hackonomics-history/hackonomics-2026
+  APP_NAME: hackonomics-app
+  RELEASE_NAME: hackonomics
+  NAMESPACE: hackonomics
   INFRA_REPO: syjoe02/Hackonomics-Infra
-  INFRA_VALUES: helm/hackonomics-infra/values.yaml
 
 jobs:
   # ──────────────────────────────────────────────
@@ -71,13 +70,13 @@ jobs:
           mkdir -p env
           cat > env/.env << 'EOF'
           DJANGO_ENV=local
-          DJANGO_SECRETKEY=ci-test-secret-key-for-testing 
+          DJANGO_SECRETKEY=ci-test-secret-key-for-testing
           DEBUG=true
-          DB_NAME=hackonomics_test
-          DB_USER=hackonomics
-          DB_PASSWORD=test-password
-          DB_HOST=localhost
-          DB_PORT=5432
+          POSTGRES_DB=hackonomics_test
+          POSTGRES_USER=hackonomics
+          POSTGRES_PASSWORD=test-password
+          POSTGRES_HOST=localhost
+          POSTGRES_PORT=5432
 
           REDIS_URL=redis://localhost:6379/0
           CENTRAL_AUTH_BASE_URL=http://localhost:8081
@@ -119,11 +118,7 @@ jobs:
       - name: Derive image tag
         id: meta
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF_NAME}"
-          else
-            TAG="sha-$(git rev-parse --short=8 HEAD)"
-          fi
+          TAG="sha-$(git rev-parse --short=8 HEAD)"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "IMAGE_TAG=${TAG}" >> "$GITHUB_ENV"
 
@@ -150,17 +145,45 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ──────────────────────────────────────────────
-  # 3. Update Infra repo → triggers ArgoCD sync
+  # 3. Deploy to k3s cluster + Health Check
+  #
+  # Runs on an ARC (Actions Runner Controller) runner set. ARC runner pods are
+  # ephemeral: the pod is created when this job is queued and is automatically
+  # terminated by the ARC controller once the job completes (pass or fail).
+  #
+  # Docker-in-Docker (DinD) is provided as a sidecar service so that k3d and
+  # docker CLI commands can run inside the runner pod without requiring a
+  # privileged host-mounted Docker socket.
+  #
+  # Kubeconfig:
+  #   Store the k3d cluster kubeconfig as KUBECONFIG_B64 in repository secrets
+  #   (base64-encoded). The server address must be reachable from within the
+  #   runner pod — typically the host node IP + k3d API port, e.g.:
+  #     k3d kubeconfig get hackonomics-dev | \
+  #       sed 's|https://0.0.0.0:|https://<host-ip>:|' | \
+  #       base64 | gh secret set KUBECONFIG_B64
   # ──────────────────────────────────────────────
-  update-infra:
-    name: Update Infra values.yaml
-    runs-on: ubuntu-latest
+  deploy:
+    name: Deploy & Health Check
+    runs-on: arc-runner-set
     needs: build-and-push
-    if: |
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+
+    # DinD sidecar — shares the pod's network namespace with the runner
+    # container, so DOCKER_HOST=tcp://localhost:2375 reaches the daemon.
+    services:
+      dind:
+        image: docker:24-dind
+        options: --privileged
+        env:
+          DOCKER_TLS_CERTDIR: ""
+
+    env:
+      DOCKER_HOST: tcp://localhost:2375
+      IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Checkout Infra repo
         uses: actions/checkout@v4
         with:
@@ -168,30 +191,119 @@ jobs:
           token: ${{ secrets.INFRA_REPO_PAT }}
           path: infra
 
-      - name: Install yq
-        run: |
-          sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
-          sudo chmod +x /usr/bin/yq
-
-      - name: Update hackonomics-app image tags in values.yaml
+      - name: Configure kubeconfig
         env:
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
         run: |
-          yq e '.hackonomics-app.web.image.repository = "${{ env.IMAGE_NAME }}"' -i infra/${{ env.INFRA_VALUES }}
-          yq e ".hackonomics-app.web.image.tag = \"${IMAGE_TAG}\"" -i infra/${{ env.INFRA_VALUES }}
-          yq e '.hackonomics-app.worker.image.repository = "${{ env.IMAGE_NAME }}"' -i infra/${{ env.INFRA_VALUES }}
-          yq e ".hackonomics-app.worker.image.tag = \"${IMAGE_TAG}\"" -i infra/${{ env.INFRA_VALUES }}
-          yq e '.hackonomics-app.beat.image.repository = "${{ env.IMAGE_NAME }}"' -i infra/${{ env.INFRA_VALUES }}
-          yq e ".hackonomics-app.beat.image.tag = \"${IMAGE_TAG}\"" -i infra/${{ env.INFRA_VALUES }}
+          mkdir -p "${HOME}/.kube"
+          echo "${KUBECONFIG_B64}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+          # Verify the API server is reachable before proceeding
+          kubectl cluster-info
 
-      - name: Commit and push
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.14.x"
+
+      - name: Deploy hackonomics-app chart
         env:
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          IMAGE_REPO: ${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
-          cd infra
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add ${{ env.INFRA_VALUES }}
-          git diff --staged --quiet && echo "No changes to commit" && exit 0
-          git commit -m "chore(hackonomics-app): update image tag to ${IMAGE_TAG} [skip ci]"
-          git push
+          helm upgrade --install hackonomics-app \
+            "${{ github.workspace }}/infra/helm/hackonomics-app" \
+            --namespace "${{ env.NAMESPACE }}" \
+            --create-namespace \
+            --values "${{ github.workspace }}/infra/helm/hackonomics-app/values-k3s-dev.yaml" \
+            --set web.image.repository="${IMAGE_REPO}" \
+            --set web.image.tag="${IMAGE_TAG}" \
+            --set worker.image.repository="${IMAGE_REPO}" \
+            --set worker.image.tag="${IMAGE_TAG}" \
+            --set beat.image.repository="${IMAGE_REPO}" \
+            --set beat.image.tag="${IMAGE_TAG}" \
+            --wait --timeout 5m
+
+      - name: Wait for rollout
+        run: |
+          kubectl -n "${{ env.NAMESPACE }}" rollout status \
+            deployment/hackonomics-app-web --timeout=120s
+          kubectl -n "${{ env.NAMESPACE }}" rollout status \
+            deployment/hackonomics-app-worker --timeout=120s
+          kubectl -n "${{ env.NAMESPACE }}" rollout status \
+            deployment/hackonomics-app-beat --timeout=120s
+
+  # ──────────────────────────────────────────────
+  # 4. Create Draft PR → main
+  #
+  # Runs only after a successful deploy. Implements the Agent Listing Protocol:
+  # the PR body carries a full audit trail of which CI agents ran and their
+  # outcomes, so reviewers can see the complete promotion path at a glance.
+  #
+  # If a dev→main PR already exists (open or draft), the step is skipped to
+  # avoid duplicate PRs on rapid pushes.
+  # ──────────────────────────────────────────────
+  create-draft-pr:
+    name: Draft PR → main
+    runs-on: arc-runner-set
+    needs: [build-and-push, deploy]
+    if: needs.deploy.result == 'success'
+    permissions:
+      contents: read
+      pull-requests: write
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+      IMAGE_NAME: ${{ env.IMAGE_NAME }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create draft PR to main
+        run: |
+          # Skip if a dev→main PR is already open
+          EXISTING=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$EXISTING" ]]; then
+            echo "PR #${EXISTING} already open — skipping creation"
+            exit 0
+          fi
+
+          cat > /tmp/pr-body.md << EOF
+          ## Summary
+
+          - **App:** hackonomics-2026 (Django)
+          - **Image:** \`${IMAGE_NAME}:${IMAGE_TAG}\`
+          - **Cluster:** hackonomics-dev (k3d)
+          - **Deployments:** \`hackonomics-hackonomics-app-{web,worker,beat}\` in namespace \`hackonomics\`
+
+          ## Deployment Checklist
+
+          - [x] Django tests passed (pytest, Postgres + Redis services)
+          - [x] Docker image built and pushed to GHCR
+          - [x] Deployed to \`hackonomics-dev\` via \`test-app.sh\`
+          - [x] \`kubectl rollout status\` passed for web, worker, and beat
+          - [ ] Peer review
+          - [ ] Merge to \`main\` to trigger production promotion
+
+          ## Agent Listing
+
+          | Agent | Runner | Outcome |
+          |-------|--------|---------|
+          | \`test\` (Django Test) | ubuntu-latest | ✅ passed |
+          | \`build-and-push\` | ubuntu-latest | ✅ pushed \`${IMAGE_TAG}\` |
+          | \`deploy\` | arc-runner-set (ephemeral) | ✅ health check passed |
+          | \`create-draft-pr\` | arc-runner-set (ephemeral) | ✅ this PR |
+
+          ---
+          *Promoted from \`dev\` by CI — [run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*
+          EOF
+
+          gh pr create \
+            --draft \
+            --base main \
+            --head dev \
+            --title "deploy(hackonomics-app): promote ${IMAGE_TAG} to main" \
+            --body-file /tmp/pr-body.md

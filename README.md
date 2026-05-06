@@ -546,11 +546,11 @@ DJANGO_SECRET_KEY=your-local-dev-secret-key-at-least-50-chars
 DJANGO_ENV=development
 
 # Database (matches docker-compose defaults)
-DB_NAME=myeconocoach
-DB_USER=econ_user
-DB_PASSWORD=econ_password
-DB_HOST=localhost
-DB_PORT=5431
+POSTGRES_DB=myeconocoach
+POSTGRES_USER=econ_user
+POSTGRES_PASSWORD=econ_password
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5431
 
 # Redis
 REDIS_URL=redis://localhost:6380/0
@@ -606,11 +606,11 @@ python manage.py run_account_consumer
 |----------|----------|---------|-------------|
 | `DJANGO_SECRET_KEY` | Yes | — | Django secret key (min 50 chars) |
 | `DJANGO_ENV` | Yes | `development` | `development` \| `prod` — enables fail-fast checks when `prod` |
-| `DB_NAME` | Yes | — | PostgreSQL database name |
-| `DB_USER` | Yes | — | PostgreSQL user |
-| `DB_PASSWORD` | Yes | — | PostgreSQL password |
-| `DB_HOST` | Yes | `localhost` | PostgreSQL host |
-| `DB_PORT` | Yes | `5431` | PostgreSQL port |
+| `POSTGRES_DB` | Yes | — | PostgreSQL database name |
+| `POSTGRES_USER` | Yes | — | PostgreSQL user |
+| `POSTGRES_PASSWORD` | Yes | — | PostgreSQL password |
+| `POSTGRES_HOST` | Yes | `localhost` | PostgreSQL host |
+| `POSTGRES_PORT` | Yes | `5431` | PostgreSQL port |
 | `REDIS_URL` | Yes | — | Redis connection URL |
 | `CENTRAL_AUTH_URL` | Yes | — | Go BFF base URL (e.g. `http://localhost:8081`) |
 | `CENTRAL_AUTH_SERVICE_KEY` | Yes | — | Shared secret for service-to-service calls (min 32 chars in prod) |
@@ -723,7 +723,7 @@ Tests are organized in two files:
 # Full suite (requires PostgreSQL on port 5431 and TESTING=True)
 DJANGO_ENV=test \
 TESTING=true \
-DB_USER=<user> DB_PASSWORD=<pass> DB_NAME=<db> DB_HOST=localhost DB_PORT=5431 \
+POSTGRES_USER=<user> POSTGRES_PASSWORD=<pass> POSTGRES_DB=<db> POSTGRES_HOST=localhost POSTGRES_PORT=5431 \
 DJANGO_SECRET_KEY=test-key \
 venv/bin/python -m pytest tests.py authentication/tests.py -v
 ```
